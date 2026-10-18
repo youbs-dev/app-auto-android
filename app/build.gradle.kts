@@ -15,6 +15,17 @@ android {
         versionName = "0.2-test"
     }
 
+    // Clé de debug fixe, versionnée : chaque compilation GitHub signe pareil,
+    // donc une nouvelle version s'installe par-dessus l'ancienne.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
