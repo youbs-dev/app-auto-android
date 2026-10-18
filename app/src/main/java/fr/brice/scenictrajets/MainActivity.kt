@@ -22,7 +22,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         val pad = (24 * resources.displayMetrics.density).toInt()
 
-        val text = TextView(this).apply {
+        val message = TextView(this).apply {
             textSize = 17f
             text = """
                 L'app est bien installée ✅
@@ -46,7 +46,7 @@ class MainActivity : Activity() {
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
-            addView(text)
+            addView(message)
             addView(button)
         }
         setContentView(ScrollView(this).apply { addView(column) })
