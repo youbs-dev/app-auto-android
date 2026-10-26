@@ -8,7 +8,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "de.youbs.scenictrajets"
+        applicationId = "fr.youbs.scenictrajets"
         minSdk = 26
         targetSdk = 35
         versionCode = 2
