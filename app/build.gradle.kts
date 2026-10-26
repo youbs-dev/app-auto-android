@@ -5,14 +5,14 @@ plugins {
 
 android {
     namespace = "fr.brice.scenictrajets"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "fr.youbs.scenictrajets"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 2
-        versionName = "0.2-test"
+        targetSdk = 36
+        versionCode = 3
+        versionName = "0.3-test"
     }
 
     // Clé de debug fixe, versionnée : chaque compilation GitHub signe pareil,
