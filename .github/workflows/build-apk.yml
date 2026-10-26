@@ -18,10 +18,23 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --stacktrace
+      - name: Compiler le bundle Google Play (si la clé d'envoi est configurée)
+        env:
+          UPLOAD_KEYSTORE_B64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
+          UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$UPLOAD_KEYSTORE_B64" ]; then echo "Pas de clé d'envoi : bundle ignoré."; exit 0; fi
+          echo "$UPLOAD_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.keystore"
+          UPLOAD_KEYSTORE_PATH="$RUNNER_TEMP/upload.keystore" ./gradlew bundleRelease --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: scenic-trajets-debug
           path: app/build/outputs/apk/debug/*.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scenic-trajets-play-bundle
+          path: app/build/outputs/bundle/release/*.aab
+          if-no-files-found: ignore
       - name: Afficher le manifeste compilé (diagnostic)
         run: |
           AAPT2=$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -1)aapt2

@@ -24,11 +24,21 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+        // Clé d'envoi Google Play : fournie par les secrets GitHub (jamais dans le dépôt).
+        System.getenv("UPLOAD_KEYSTORE_PATH")?.let { path ->
+            create("upload") {
+                storeFile = file(path)
+                storePassword = System.getenv("UPLOAD_KEYSTORE_PASSWORD")
+                keyAlias = "upload"
+                keyPassword = System.getenv("UPLOAD_KEYSTORE_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfigs.findByName("upload")?.let { signingConfig = it }
         }
     }
     compileOptions {
