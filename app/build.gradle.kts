@@ -62,6 +62,8 @@ dependencies {
     // Écran du téléphone : Jetpack Compose avec Material 3 Expressive.
     // Ces versions exigent AGP 9.1 et compileSdk 37.
     implementation("androidx.activity:activity-compose:1.11.0")
+    // Version récente exigée par la demande d'autorisations (une dépendance tire une version ancienne).
+    implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.compose.material3:material3:1.5.0-alpha29")
     implementation("androidx.compose.material:material-icons-core:1.7.8")
 }
