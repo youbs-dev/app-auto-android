@@ -11,8 +11,8 @@ android {
         applicationId = "fr.youbs.scenictrajets"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.6-test"
+        versionCode = 7
+        versionName = "0.7-test"
     }
 
     // Clé de debug fixe, versionnée : chaque compilation GitHub signe pareil,
@@ -57,4 +57,6 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     // Détection « en voiture » pour démarrer les trajets automatiquement
     implementation("com.google.android.gms:play-services-location:21.3.0")
+    // Envoi vers Dawarich en arrière-plan, dès qu'Internet est disponible
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 }

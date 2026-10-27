@@ -114,6 +114,10 @@ object TripRecorder {
         )
         summary.appendText(toCsv(trip) + "\n")
         runCatching { writeGpx(context, tripId) }
+        // Copie de sauvegarde dans Téléchargements, puis envoi à Dawarich dès qu'Internet est là.
+        LocalBackup.save(context, gpxFile(context, tripId))
+        LocalBackup.save(context, pointsFile(context, tripId))
+        runCatching { SyncWorker.runSoon(context) }
         notifyListeners()
     }
 
@@ -123,6 +127,30 @@ object TripRecorder {
         if (!isActive) return
         isActive = false
         pointsFile(context, tripId).delete()
+        notifyListeners()
+    }
+
+    /** Nouveau format à chaque appel : la lecture peut se faire depuis la tâche d'envoi, en parallèle. */
+    fun parseTime(s: String): Date? = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.FRANCE).parse(s)
+
+    private fun sentFile(context: Context) = File(dir(context), "envoyes_dawarich.txt")
+
+    fun isSent(context: Context, id: String) =
+        sentFile(context).let { it.exists() && it.readLines().contains(id) }
+
+    @Synchronized
+    fun markSent(context: Context, id: String) {
+        sentFile(context).appendText(id + "\n")
+        notifyListeners()
+    }
+
+    private fun errorFile(context: Context) = File(dir(context), "derniere_erreur.txt")
+
+    fun lastError(context: Context): String? =
+        errorFile(context).takeIf { it.exists() }?.readText()?.ifBlank { null }
+
+    fun setLastError(context: Context, message: String?) {
+        if (message == null) errorFile(context).delete() else errorFile(context).writeText(message)
         notifyListeners()
     }
 
@@ -140,7 +168,7 @@ object TripRecorder {
         pointsFile(context, id).readLines().drop(1).forEach { line ->
             val c = line.split(";")
             if (c.size < 3) return@forEach
-            val time = runCatching { dateFormat.parse(c[0]) }.getOrNull() ?: return@forEach
+            val time = runCatching { parseTime(c[0]) }.getOrNull() ?: return@forEach
             sb.append("    <trkpt lat=\"${c[1]}\" lon=\"${c[2]}\">")
             if (c.size > 7 && c[7].isNotEmpty()) sb.append("<ele>${c[7]}</ele>")
             sb.append("<time>${iso.format(time)}</time></trkpt>\n")
@@ -181,7 +209,7 @@ object TripRecorder {
             if (c.size < 11) return@mapNotNull null
             runCatching {
                 Trip(
-                    c[0], dateFormat.parse(c[1])!!.time, dateFormat.parse(c[2])!!.time,
+                    c[0], parseTime(c[1])!!.time, parseTime(c[2])!!.time,
                     c[4].toDouble(), c[5].toFloatOrNull(), c[6].toFloatOrNull(),
                     c[7].toFloatOrNull(), c[8].toFloatOrNull(), c[9].toFloatOrNull(), c[10].toFloatOrNull(),
                 )

@@ -24,10 +24,15 @@
     <uses-permission android:name="com.google.android.gms.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Envoi des trajets vers Dawarich -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_car"
-        android:label="@string/app_name">
+        android:label="@string/app_name"
+        android:usesCleartextTraffic="true">
 
         <meta-data
             android:name="com.google.android.gms.car.application"

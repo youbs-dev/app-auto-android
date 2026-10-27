@@ -8,7 +8,11 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.text.InputType
+import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.EditText
+import android.widget.Spinner
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
@@ -31,6 +35,11 @@ class MainActivity : Activity() {
     private lateinit var tripsView: TextView
     private lateinit var backgroundButton: Button
     private lateinit var autoSwitch: Switch
+    private lateinit var urlField: EditText
+    private lateinit var keyField: EditText
+    private lateinit var uploadSwitch: Switch
+    private lateinit var retentionSpinner: Spinner
+    private lateinit var syncStatus: TextView
     private val tripListener: () -> Unit = { runOnUiThread { refreshTrips() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -101,6 +110,57 @@ class MainActivity : Activity() {
             setOnClickListener { openAndroidAutoSettings() }
         }
 
+        val syncTitle = TextView(this).apply {
+            textSize = 20f
+            text = "\nTransfert vers Dawarich"
+        }
+        urlField = EditText(this).apply {
+            hint = "Adresse du serveur (ex. https://dawarich.exemple.fr)"
+            inputType = InputType.TYPE_TEXT_VARIATION_URI
+            setText(SyncSettings.url(this@MainActivity))
+        }
+        keyField = EditText(this).apply {
+            hint = "Clé API (Dawarich > Compte > API key)"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setText(SyncSettings.apiKey(this@MainActivity))
+        }
+        uploadSwitch = Switch(this).apply {
+            text = "Envoyer chaque trajet automatiquement"
+            textSize = 16f
+            isChecked = SyncSettings.autoUpload(this@MainActivity)
+        }
+        val retentionLabel = TextView(this).apply {
+            textSize = 16f
+            text = "\nGarder les fichiers des trajets sur le téléphone :"
+        }
+        retentionSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                SyncSettings.RETENTION_CHOICES.map { it.second },
+            )
+            val current = SyncSettings.RETENTION_CHOICES.indexOfFirst { it.first == SyncSettings.retentionDays(this@MainActivity) }
+            setSelection(if (current >= 0) current else 2)
+        }
+        val retentionHelp = TextView(this).apply {
+            textSize = 13f
+            text = "Une copie de chaque trajet est aussi rangée dans Téléchargements/Scenic Trajets. " +
+                "Passé ce délai, les fichiers sont supprimés, jamais avant d'avoir été envoyés à Dawarich. " +
+                "L'historique ci-dessous reste."
+        }
+        val saveButton = Button(this).apply {
+            text = "Enregistrer et tester la connexion"
+            setOnClickListener { saveAndTest() }
+        }
+        val sendNowButton = Button(this).apply {
+            text = "Envoyer maintenant les trajets en attente"
+            setOnClickListener {
+                saveSettings()
+                SyncWorker.runSoon(this@MainActivity)
+                syncStatus.text = "Envoi lancé…"
+            }
+        }
+        syncStatus = TextView(this).apply { textSize = 15f }
+
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
@@ -111,6 +171,16 @@ class MainActivity : Activity() {
             addView(settingsButton)
             addView(help)
             addView(autoButton)
+            addView(syncTitle)
+            addView(urlField)
+            addView(keyField)
+            addView(uploadSwitch)
+            addView(retentionLabel)
+            addView(retentionSpinner)
+            addView(retentionHelp)
+            addView(saveButton)
+            addView(sendNowButton)
+            addView(syncStatus)
             addView(tripsTitle)
             addView(gpxButton)
             addView(exportButton)
@@ -124,6 +194,35 @@ class MainActivity : Activity() {
         refreshStatus()
         refreshTrips()
         TripRecorder.addListener(tripListener)
+        SyncWorker.schedule(this)
+    }
+
+    override fun onStop() {
+        saveSettings()
+        super.onStop()
+    }
+
+    private fun saveSettings() {
+        SyncSettings.save(
+            this, urlField.text.toString(), keyField.text.toString(), uploadSwitch.isChecked,
+            SyncSettings.RETENTION_CHOICES[retentionSpinner.selectedItemPosition].first,
+        )
+    }
+
+    private fun saveAndTest() {
+        saveSettings()
+        if (!SyncSettings.isConfigured(this)) {
+            syncStatus.text = "⚠️ Renseigne l'adresse du serveur et la clé API."
+            return
+        }
+        syncStatus.text = "Test en cours…"
+        Thread {
+            val error = Dawarich.test(this)
+            runOnUiThread {
+                syncStatus.text = if (error == null) "✅ Connexion à Dawarich réussie" else "❌ Échec : $error"
+                if (error == null) SyncWorker.runSoon(this)
+            }
+        }.start()
     }
 
     override fun onPause() {
@@ -190,14 +289,21 @@ class MainActivity : Activity() {
             lines += String.format(Locale.FRANCE, "🔴 Trajet en cours : %.1f km\n", TripRecorder.distanceKm)
         }
         val trips = TripRecorder.trips(this)
+        val configured = SyncSettings.isConfigured(this)
+        TripRecorder.lastError(this)?.let { if (configured) syncStatus.text = "❌ Dernier envoi échoué : $it" }
         if (trips.isEmpty() && !TripRecorder.isActive) lines += "Aucun trajet pour l'instant."
         trips.forEach { t ->
             val batt = if (t.batteryStart != null && t.batteryEnd != null) {
                 String.format(Locale.FRANCE, "batterie %.0f %% → %.0f %% (−%.1f pts)",
                     t.batteryStart, t.batteryEnd, t.batteryStart - t.batteryEnd)
             } else "batterie non lue"
-            lines += String.format(Locale.FRANCE, "%s\n%.1f km · %d min · %s\n",
-                df.format(Date(t.start)), t.distanceKm, t.durationMin, batt)
+            val cloud = when {
+                !configured -> ""
+                TripRecorder.isSent(this, t.id) -> " · ☁️ envoyé"
+                else -> " · ⏳ à envoyer"
+            }
+            lines += String.format(Locale.FRANCE, "%s%s\n%.1f km · %d min · %s\n",
+                df.format(Date(t.start)), cloud, t.distanceKm, t.durationMin, batt)
         }
         tripsView.text = lines.joinToString("\n")
     }

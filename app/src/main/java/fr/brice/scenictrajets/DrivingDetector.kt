@@ -77,7 +77,10 @@ object DrivingDetector {
 class DrivingReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
-            Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> DrivingDetector.register(context)
+            Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
+                DrivingDetector.register(context)
+                SyncWorker.schedule(context)
+            }
             else -> {
                 if (!ActivityTransitionResult.hasResult(intent)) return
                 val result = ActivityTransitionResult.extractResult(intent) ?: return
