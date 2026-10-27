@@ -95,6 +95,12 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
                 ActionStrip.Builder()
                     .addAction(
                         Action.Builder()
+                            .setTitle("Bornes")
+                            .setOnClickListener { screenManager.push(ChargersScreen(carContext)) }
+                            .build()
+                    )
+                    .addAction(
+                        Action.Builder()
                             .setTitle("Diagnostic")
                             .setOnClickListener { screenManager.push(DiagnosticScreen(carContext, this)) }
                             .build()
@@ -110,7 +116,10 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
         Row.Builder()
             .setTitle("🔴 " + TripStats.km(live.distanceKm) + " · " + TripStats.duration(live.durationMin))
             .addText(TripStats.liveSpeed(live))
-            .addText(if (TripRecorder.isAuto) "Trajet en cours (automatique)" else "Trajet en cours")
+            .addText(
+                TripPlaces.liveStart?.let { "Départ : $it" }
+                    ?: if (TripRecorder.isAuto) "Trajet en cours (automatique)" else "Trajet en cours"
+            )
             .build()
     } else {
         Row.Builder()
@@ -132,7 +141,8 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
             permissionMissing -> "Accès non autorisé"
             else -> "En attente de la voiture…"
         }
-        val row = Row.Builder().setTitle("🔋 Batterie").addText(text)
+        val low = BatteryAlert.isLow(carContext)
+        val row = Row.Builder().setTitle(if (low) "🪫 Batterie basse · touche Bornes" else "🔋 Batterie").addText(text)
         // Pendant un trajet : batterie utilisée, consommation et coût depuis le départ.
         if (TripRecorder.isActive && pct != null) row.addText(TripStats.liveEnergy(TripStats.live(carContext)))
         return row.build()

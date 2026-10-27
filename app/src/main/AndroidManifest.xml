@@ -66,6 +66,12 @@
             android:label="Bilan"
             android:parentActivityName=".MainActivity" />
 
+        <activity
+            android:name=".TripMapActivity"
+            android:exported="false"
+            android:label="Carte du trajet"
+            android:parentActivityName=".MainActivity" />
+
         <service
             android:name=".TestCarAppService"
             android:exported="true">

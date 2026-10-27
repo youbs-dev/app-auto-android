@@ -45,7 +45,10 @@ class CarData(private val carContext: CarContext, private val onChange: () -> Un
         CarSnapshot.batteryPercent = ok(e.batteryPercent)
         CarSnapshot.rangeKm = ok(e.rangeRemainingMeters)?.div(1000f)
         TripRecorder.onCarData()
-        CarSnapshot.batteryPercent?.let { pct -> runCatching { ChargeLog.onBattery(carContext, pct) } }
+        CarSnapshot.batteryPercent?.let { pct ->
+            runCatching { ChargeLog.onBattery(carContext, pct) }
+            runCatching { BatteryAlert.onBattery(carContext, pct) }
+        }
         batterie = format(e.batteryPercent) { String.format(Locale.FRANCE, "%.1f %%", it) }
         autonomie = format(e.rangeRemainingMeters) { String.format(Locale.FRANCE, "%.0f km", it / 1000f) }
         Log.i(TAG, "batterie=$batterie autonomie=$autonomie")

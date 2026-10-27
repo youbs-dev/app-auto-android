@@ -184,6 +184,30 @@ class SettingsActivity : ComponentActivity() {
                     }
                 }
                 item {
+                    Section("Alerte batterie basse") {
+                        var open by remember { mutableStateOf(false) }
+                        var threshold by remember { mutableStateOf(AlertSettings.threshold(c)) }
+                        Text("Prévenir sous", style = MaterialTheme.typography.bodyLarge)
+                        Box {
+                            OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
+                                Text(if (threshold == 0) "Jamais" else "$threshold %")
+                            }
+                            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                                AlertSettings.CHOICES.forEach { v ->
+                                    DropdownMenuItem(
+                                        text = { Text(if (v == 0) "Jamais" else "$v %") },
+                                        onClick = { threshold = v; AlertSettings.setThreshold(c, v); open = false },
+                                    )
+                                }
+                            }
+                        }
+                        Hint(
+                            "Sous ce seuil, une alerte s'affiche sur l'écran du Scénic. Touche-la, ou le bouton Bornes, " +
+                                "pour voir les bornes proches (base OpenStreetMap) et lancer le guidage."
+                        )
+                    }
+                }
+                item {
                     Section("Prix") {
                         NumberField("Prix du kWh à la maison (€)", priceHome, "0,2516") { priceHome = it }
                         NumberField("Prix du kWh en heures creuses (€, facultatif)", priceOffPeak, "0,2068") { priceOffPeak = it }

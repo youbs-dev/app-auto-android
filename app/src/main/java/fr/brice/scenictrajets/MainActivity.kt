@@ -93,6 +93,7 @@ class MainActivity : ComponentActivity() {
         TripRecorder.addListener(tripListener)
         ChargeLog.addListener(chargeListener)
         SyncWorker.schedule(this)
+        TripPlaces.resolveMissingSoon(this)
         // Enregistre (ou ré-enregistre) la détection de conduite dès que les autorisations le permettent.
         DrivingDetector.register(this)
     }
@@ -212,9 +213,19 @@ class MainActivity : ComponentActivity() {
                 title = { Text(TripStats.shortDate(t) + " · " + TripStats.hours(t)) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TripPlaces.of(this@MainActivity, t.id)?.let { p ->
+                            Text("Départ : " + p.start)
+                            Text("Arrivée : " + p.end)
+                        }
                         Text(TripStats.summary(t))
                         Text(TripStats.batteryAndCost(this@MainActivity, t))
                         Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = {
+                            selected = null
+                            startActivity(Intent(this@MainActivity, TripMapActivity::class.java).putExtra(TripMapActivity.EXTRA_ID, t.id))
+                        }) {
+                            Text("Voir la carte du trajet")
+                        }
                         TextButton(onClick = { selected = null; share(listOf(TripRecorder.gpxFile(this@MainActivity, t.id)), "*/*") }) {
                             Text("Partager le parcours (GPX)")
                         }
@@ -266,6 +277,7 @@ class MainActivity : ComponentActivity() {
                     if (TripRecorder.isAuto) "Trajet en cours (automatique)" else "Trajet en cours",
                     style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
                 )
+                TripPlaces.liveStart?.let { Text("Départ : $it", style = MaterialTheme.typography.bodyMedium) }
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(
                         live.speedKmh?.let { String.format(Locale.FRANCE, "%.0f", it) } ?: "–",
@@ -381,6 +393,9 @@ class MainActivity : ComponentActivity() {
                 Row {
                     Text(TripStats.hours(t), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                     cloud?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
+                TripPlaces.label(this@MainActivity, t.id)?.let {
+                    Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
                 }
                 Text(TripStats.summary(t), style = MaterialTheme.typography.bodyLarge)
                 Text(TripStats.batteryAndCost(this@MainActivity, t), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

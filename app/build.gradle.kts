@@ -11,8 +11,8 @@ android {
         applicationId = "fr.youbs.scenictrajets"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.10-test"
+        versionCode = 11
+        versionName = "0.11-test"
     }
 
     // Clé de debug fixe, versionnée : chaque compilation GitHub signe pareil,
@@ -66,4 +66,6 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.compose.material3:material3:1.5.0-alpha29")
     implementation("androidx.compose.material:material-icons-core:1.7.8")
+    // Carte des trajets sur le téléphone : fond OpenStreetMap, sans clé
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
 }

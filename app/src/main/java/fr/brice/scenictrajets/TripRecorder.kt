@@ -88,6 +88,9 @@ object TripRecorder {
 
     fun addListener(l: () -> Unit) { synchronized(listeners) { listeners += l } }
     fun removeListener(l: () -> Unit) { synchronized(listeners) { listeners -= l } }
+    /** Prévient les écrans qu'une information d'un trajet a changé (lieux retrouvés, par exemple). */
+    fun changed() = notifyListeners()
+
     private fun notifyListeners() { synchronized(listeners) { listeners.toList() }.forEach { it() } }
 
     /** Démarre un trajet. Appelé par TripService (automatiquement ou depuis le bouton). */
@@ -156,6 +159,7 @@ object TripRecorder {
         LocalBackup.save(context, gpxFile(context, tripId))
         LocalBackup.save(context, pointsFile(context, tripId))
         runCatching { SyncWorker.runSoon(context) }
+        TripPlaces.resolveMissingSoon(context)
         notifyListeners()
     }
 
@@ -224,6 +228,7 @@ object TripRecorder {
         speedKmh?.let { if (loc.accuracy <= 30f && it > maxSpeedKmh) maxSpeedKmh = it }
         // On ignore les positions trop imprécises pour le calcul de distance.
         if (loc.accuracy <= 50f) {
+            if (lastLocation == null) TripPlaces.onTripStart(context, startTime, loc.latitude, loc.longitude)
             lastLocation?.let { distanceKm += it.distanceTo(loc) / 1000.0 }
             lastLocation = loc
         }

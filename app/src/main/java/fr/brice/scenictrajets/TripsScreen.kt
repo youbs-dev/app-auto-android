@@ -44,10 +44,14 @@ class TripsScreen(carContext: CarContext) : Screen(carContext) {
         }
         if (trips.isNotEmpty()) {
             trips.take((limit - used).coerceAtLeast(1)).forEach { t ->
+                val places = TripPlaces.label(carContext, t.id)
                 list.addItem(
                     Row.Builder()
-                        .setTitle(TripStats.shortDate(t) + " · " + TripStats.hours(t))
-                        .addText(TripStats.summary(t))
+                        .setTitle(places ?: (TripStats.shortDate(t) + " · " + TripStats.hours(t)))
+                        .addText(
+                            (if (places != null) TripStats.shortDate(t) + " · " + TripStats.hours(t) + " · " else "") +
+                                TripStats.summary(t)
+                        )
                         .addText(TripStats.batteryAndCost(carContext, t))
                         .build()
                 )
