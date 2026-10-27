@@ -11,6 +11,13 @@
     <uses-permission android:name="com.google.android.gms.permission.CAR_SPEED" />
     <uses-permission android:name="com.google.android.gms.permission.CAR_MILEAGE" />
 
+    <!-- Enregistrement des trajets : GPS gardé actif par un service au premier plan -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_car"
@@ -43,5 +50,21 @@
                 <category android:name="androidx.car.app.category.POI" />
             </intent-filter>
         </service>
+
+        <service
+            android:name=".TripService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <!-- Partage des fichiers CSV (export) -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fichiers"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

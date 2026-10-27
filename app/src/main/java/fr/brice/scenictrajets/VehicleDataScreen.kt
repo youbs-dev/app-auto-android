@@ -55,6 +55,8 @@ class VehicleDataScreen(carContext: CarContext) : Screen(carContext) {
     private var refreshPending = false
 
     private val energyListener = OnCarDataAvailableListener<EnergyLevel> { e ->
+        CarSnapshot.batteryPercent = ok(e.batteryPercent)
+        CarSnapshot.rangeKm = ok(e.rangeRemainingMeters)?.div(1000f)
         batterie = format(e.batteryPercent) { String.format(Locale.FRANCE, "%.1f %%", it) }
         autonomie = format(e.rangeRemainingMeters) { String.format(Locale.FRANCE, "%.0f km", it / 1000f) }
         Log.i(TAG, "batterie=$batterie autonomie=$autonomie")
@@ -67,19 +69,35 @@ class VehicleDataScreen(carContext: CarContext) : Screen(carContext) {
     }
 
     private val mileageListener = OnCarDataAvailableListener<Mileage> { m ->
-        kilometrage = format(m.odometerMeters) { String.format(Locale.FRANCE, "%.1f km", it / 1000f) }
+        // Malgré son nom, la valeur arrive déjà en km sur le Scénic (13 300 km vérifiés au tableau de bord).
+        CarSnapshot.odometerKm = ok(m.odometerMeters)
+        kilometrage = format(m.odometerMeters) { String.format(Locale.FRANCE, "%,.0f km", it) }
         Log.i(TAG, "kilometrage=$kilometrage")
         refresh()
     }
 
+    private val tripListener: () -> Unit = { refresh() }
+    private var listening = false
+
     init {
         lifecycle.addObserver(object : DefaultLifecycleObserver {
-            override fun onStart(owner: LifecycleOwner) = startListening()
-            override fun onStop(owner: LifecycleOwner) = stopListening()
+            override fun onStart(owner: LifecycleOwner) {
+                if (!listening) startListening()
+            }
+            // Pendant un trajet, on continue de lire la batterie même si un autre écran est affiché.
+            override fun onStop(owner: LifecycleOwner) {
+                if (!TripRecorder.isActive) stopListening()
+            }
+            override fun onCreate(owner: LifecycleOwner) = TripRecorder.addListener(tripListener)
+            override fun onDestroy(owner: LifecycleOwner) {
+                TripRecorder.removeListener(tripListener)
+                stopListening()
+            }
         })
     }
 
     private fun startListening() {
+        listening = true
         safely("modèle") {
             carInfo.fetchModel(executor) { m: Model ->
                 val nom = listOfNotNull(m.manufacturer.value, m.name.value, m.year.value?.toString())
@@ -106,6 +124,7 @@ class VehicleDataScreen(carContext: CarContext) : Screen(carContext) {
     }
 
     private fun stopListening() {
+        listening = false
         runCatching { carInfo.removeEnergyLevelListener(energyListener) }
         runCatching { carInfo.removeSpeedListener(speedListener) }
         runCatching { carInfo.removeMileageListener(mileageListener) }
@@ -134,6 +153,9 @@ class VehicleDataScreen(carContext: CarContext) : Screen(carContext) {
         refreshPending = true
         handler.postDelayed({ refreshPending = false; invalidate() }, 1000)
     }
+
+    private fun ok(v: CarValue<Float>): Float? =
+        if (v.status == CarValue.STATUS_SUCCESS) v.value else null
 
     private fun <T> format(v: CarValue<T>, fmt: (T) -> String): String {
         val value = v.value
@@ -202,6 +224,7 @@ class VehicleDataScreen(carContext: CarContext) : Screen(carContext) {
         }
 
         val list = ItemList.Builder()
+            .addItem(tripRow())
             .addItem(row("Véhicule", vehicule))
             .addItem(row("Batterie", batterie))
             .addItem(row("Autonomie", autonomie))
@@ -215,6 +238,42 @@ class VehicleDataScreen(carContext: CarContext) : Screen(carContext) {
             .setHeaderAction(Action.APP_ICON)
             .setSingleList(list)
             .build()
+    }
+
+    private fun tripRow(): Row {
+        val builder = Row.Builder()
+        if (TripRecorder.isActive) {
+            val min = (System.currentTimeMillis() - TripRecorder.startTime) / 60_000
+            builder.setTitle("⏹ Arrêter le trajet")
+                .addText(String.format(Locale.FRANCE, "En cours : %.1f km · %d min", TripRecorder.distanceKm, min))
+        } else {
+            builder.setTitle("▶ Démarrer un trajet")
+                .addText("Enregistre le parcours GPS, la batterie et l'autonomie")
+        }
+        builder.setOnClickListener { toggleTrip() }
+        return builder.build()
+    }
+
+    private fun toggleTrip() {
+        try {
+            if (TripRecorder.isActive) {
+                TripRecorder.stop(carContext)
+                CarToast.makeText(carContext, "Trajet enregistré", CarToast.LENGTH_SHORT).show()
+            } else if (!TripRecorder.hasLocationPermission(carContext)) {
+                CarToast.makeText(
+                    carContext,
+                    "Autorise la localisation dans l'app Scénic Trajets sur le téléphone",
+                    CarToast.LENGTH_LONG,
+                ).show()
+            } else {
+                TripRecorder.start(carContext)
+                CarToast.makeText(carContext, "Trajet démarré", CarToast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Trajet : erreur", e)
+            CarToast.makeText(carContext, "Erreur : ${e.javaClass.simpleName}", CarToast.LENGTH_LONG).show()
+        }
+        invalidate()
     }
 
     private fun row(title: String, value: String) =
