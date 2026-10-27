@@ -66,8 +66,9 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.3.0")
     // Envoi vers Dawarich en arrière-plan, dès qu'Internet est disponible
     implementation("androidx.work:work-runtime-ktx:2.9.1")
-    // Écran du téléphone : Jetpack Compose avec Material 3 Expressive
+    // Écran du téléphone : Jetpack Compose avec Material 3 Expressive.
+    // alpha24 (Compose 1.12) : les versions suivantes exigent AGP 9.1 et compileSdk 37.
     implementation("androidx.activity:activity-compose:1.11.0")
-    implementation("androidx.compose.material3:material3:1.5.0-alpha28")
+    implementation("androidx.compose.material3:material3:1.5.0-alpha24")
     implementation("androidx.compose.material:material-icons-core:1.7.8")
 }
