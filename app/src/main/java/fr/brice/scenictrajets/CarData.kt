@@ -44,6 +44,8 @@ class CarData(private val carContext: CarContext, private val onChange: () -> Un
     private val energyListener = OnCarDataAvailableListener<EnergyLevel> { e ->
         CarSnapshot.batteryPercent = ok(e.batteryPercent)
         CarSnapshot.rangeKm = ok(e.rangeRemainingMeters)?.div(1000f)
+        TripRecorder.onCarData()
+        CarSnapshot.batteryPercent?.let { pct -> runCatching { ChargeLog.onBattery(carContext, pct) } }
         batterie = format(e.batteryPercent) { String.format(Locale.FRANCE, "%.1f %%", it) }
         autonomie = format(e.rangeRemainingMeters) { String.format(Locale.FRANCE, "%.0f km", it / 1000f) }
         Log.i(TAG, "batterie=$batterie autonomie=$autonomie")
@@ -58,6 +60,7 @@ class CarData(private val carContext: CarContext, private val onChange: () -> Un
     private val mileageListener = OnCarDataAvailableListener<Mileage> { m ->
         // Malgré son nom, la valeur arrive déjà en km sur le Scénic (13 300 km vérifiés au tableau de bord).
         CarSnapshot.odometerKm = ok(m.odometerMeters)
+        TripRecorder.onCarData()
         kilometrage = format(m.odometerMeters) { String.format(Locale.FRANCE, "%,.0f km", it) }
         onChange()
     }

@@ -48,6 +48,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
@@ -78,6 +79,7 @@ class MainActivity : ComponentActivity() {
     private var tripTick by mutableIntStateOf(0)
     private var statusTick by mutableIntStateOf(0)
     private val tripListener: () -> Unit = { runOnUiThread { tripTick++ } }
+    private val chargeListener: () -> Unit = { runOnUiThread { statusTick++ } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -89,6 +91,7 @@ class MainActivity : ComponentActivity() {
         statusTick++
         tripTick++
         TripRecorder.addListener(tripListener)
+        ChargeLog.addListener(chargeListener)
         SyncWorker.schedule(this)
         // Enregistre (ou ré-enregistre) la détection de conduite dès que les autorisations le permettent.
         DrivingDetector.register(this)
@@ -96,6 +99,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         TripRecorder.removeListener(tripListener)
+        ChargeLog.removeListener(chargeListener)
         super.onPause()
     }
 
@@ -135,6 +139,10 @@ class MainActivity : ComponentActivity() {
                             Icon(Icons.Filled.MoreVert, contentDescription = "Plus")
                         }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Bilan du mois et recharges") },
+                                onClick = { menu = false; openBilan() },
+                            )
                             DropdownMenuItem(
                                 text = { Text("Exporter tout (GPX, Dawarich)") },
                                 onClick = { menu = false; exportAll("gpx", "*/*") },
@@ -205,7 +213,7 @@ class MainActivity : ComponentActivity() {
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(TripStats.summary(t))
-                        Text(TripStats.battery(t))
+                        Text(TripStats.batteryAndCost(this@MainActivity, t))
                         Spacer(Modifier.height(8.dp))
                         TextButton(onClick = { selected = null; share(listOf(TripRecorder.gpxFile(this@MainActivity, t.id)), "*/*") }) {
                             Text("Partager le parcours (GPX)")
@@ -243,18 +251,76 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Trajet en cours, mis à jour à chaque position GPS : vitesse, distance, batterie, coût. */
     @OptIn(ExperimentalMaterial3ExpressiveApi::class)
     @Composable
     private fun CurrentTripCard(@Suppress("UNUSED_PARAMETER") tick: Int) {
         val scheme = MaterialTheme.colorScheme
+        val live = TripStats.live(this)
         Card(
             shape = MaterialTheme.shapes.extraLarge,
             colors = CardDefaults.cardColors(containerColor = scheme.secondaryContainer, contentColor = scheme.onSecondaryContainer),
         ) {
-            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Trajet en cours", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text(TripStats.current(), style = MaterialTheme.typography.headlineSmall)
+            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    if (TripRecorder.isAuto) "Trajet en cours (automatique)" else "Trajet en cours",
+                    style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                )
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        live.speedKmh?.let { String.format(Locale.FRANCE, "%.0f", it) } ?: "–",
+                        style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Bold,
+                    )
+                    Text(" km/h", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 10.dp))
+                }
+                Text(
+                    listOfNotNull(
+                        live.avgKmh?.let { "moyenne " + TripStats.kmh(it) },
+                        live.maxKmh.takeIf { it > 0 }?.let { "max " + TripStats.kmh(it) },
+                    ).joinToString(" · ").ifEmpty { "Vitesse mesurée par le GPS" },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LiveTile("Distance", TripStats.km(live.distanceKm), Modifier.weight(1f))
+                    LiveTile("Durée", TripStats.duration(live.durationMin), Modifier.weight(1f))
+                    LiveTile("Coût", live.cost?.let { TripStats.euros(it) } ?: "–", Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LiveTile(
+                        "Batterie",
+                        live.batteryNow?.let { n ->
+                            live.batteryStart?.let { String.format(Locale.FRANCE, "%.0f → %.0f %%", it, n) }
+                                ?: String.format(Locale.FRANCE, "%.0f %%", n)
+                        } ?: "–",
+                        Modifier.weight(1f),
+                    )
+                    LiveTile("Énergie", live.kwh?.let { String.format(Locale.FRANCE, "%.1f kWh", it) } ?: "–", Modifier.weight(1f))
+                    LiveTile("kWh/100 km", live.kwhPer100?.let { String.format(Locale.FRANCE, "%.1f", it) } ?: "–", Modifier.weight(1f))
+                }
+                live.rangeKm?.let {
+                    Text(String.format(Locale.FRANCE, "Autonomie restante : %.0f km", it), style = MaterialTheme.typography.bodyMedium)
+                }
+                if (live.batteryNow == null) {
+                    Text(
+                        "La batterie s'affiche quand Scénic Trajets est ouvert sur l'écran de la voiture.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 LinearWavyProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+
+    @Composable
+    private fun LiveTile(label: String, value: String, modifier: Modifier) {
+        Card(
+            modifier = modifier,
+            shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+        ) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
             }
         }
     }
@@ -264,7 +330,9 @@ class MainActivity : ComponentActivity() {
         val list = trips.filter { it.start >= since }
         val km = list.sumOf { it.distanceKm }
         val kwh = list.mapNotNull { TripStats.kwh(it) }.sum()
+        val cost = list.mapNotNull { PriceSettings.tripCost(this, it) }.sum()
         Card(
+            onClick = { openBilan() },
             modifier = modifier,
             shape = MaterialTheme.shapes.extraLarge,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
@@ -278,7 +346,8 @@ class MainActivity : ComponentActivity() {
                 )
                 Text(
                     (if (list.size == 1) "1 trajet" else "${list.size} trajets") +
-                        (if (kwh > 0) String.format(Locale.FRANCE, " · %.0f kWh", kwh) else ""),
+                        (if (kwh > 0) String.format(Locale.FRANCE, " · %.0f kWh", kwh) else "") +
+                        (if (cost > 0) " · " + TripStats.euros(cost) else ""),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -314,7 +383,7 @@ class MainActivity : ComponentActivity() {
                     cloud?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
                 Text(TripStats.summary(t), style = MaterialTheme.typography.bodyLarge)
-                Text(TripStats.battery(t), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(TripStats.batteryAndCost(this@MainActivity, t), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -360,6 +429,8 @@ class MainActivity : ComponentActivity() {
             )
         }
     }
+
+    private fun openBilan() = startActivity(Intent(this, BilanActivity::class.java))
 
     private fun openAppSettings() {
         runCatching {

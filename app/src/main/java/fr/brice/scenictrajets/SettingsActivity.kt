@@ -67,6 +67,10 @@ class SettingsActivity : ComponentActivity() {
     private var autoUpload by mutableStateOf(true)
     private var retention by mutableStateOf(60)
     private var syncStatus by mutableStateOf("")
+    private var priceHome by mutableStateOf("")
+    private var priceOffPeak by mutableStateOf("")
+    private var fuelPrice by mutableStateOf("")
+    private var fuelPer100 by mutableStateOf("")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,6 +78,10 @@ class SettingsActivity : ComponentActivity() {
         key = SyncSettings.apiKey(this)
         autoUpload = SyncSettings.autoUpload(this)
         retention = SyncSettings.retentionDays(this)
+        priceHome = num(PriceSettings.homePrice(this))
+        priceOffPeak = PriceSettings.offPeakPrice(this).takeIf { it > 0f }?.let { num(it) } ?: ""
+        fuelPrice = num(PriceSettings.fuelPrice(this))
+        fuelPer100 = num(PriceSettings.fuelPer100(this))
         TripRecorder.lastError(this)?.let { if (SyncSettings.isConfigured(this)) syncStatus = "❌ Dernier envoi échoué : $it" }
         setContent { ScenicTheme { SettingsContent() } }
     }
@@ -83,7 +91,19 @@ class SettingsActivity : ComponentActivity() {
         super.onStop()
     }
 
-    private fun saveSettings() = SyncSettings.save(this, url, key, autoUpload, retention)
+    private fun saveSettings() {
+        SyncSettings.save(this, url, key, autoUpload, retention)
+        PriceSettings.save(
+            this,
+            parsePrice(priceHome) ?: PriceSettings.homePrice(this),
+            parsePrice(priceOffPeak) ?: 0f,
+            parsePrice(fuelPrice) ?: PriceSettings.fuelPrice(this),
+            parsePrice(fuelPer100) ?: PriceSettings.fuelPer100(this),
+        )
+    }
+
+    /** « 0,2516 » plutôt que « 0.2516000 ». */
+    private fun num(v: Float) = String.format(java.util.Locale.FRANCE, "%.4f", v).trimEnd('0').trimEnd(',')
 
     private fun saveAndTest() {
         saveSettings()
@@ -161,6 +181,19 @@ class SettingsActivity : ComponentActivity() {
                                 "Il s'arrête quand Android Auto se déconnecte ou après 10 minutes à l'arrêt. " +
                                 "Un trajet sans Android Auto (bus, autre voiture) est ignoré."
                         )
+                    }
+                }
+                item {
+                    Section("Prix") {
+                        NumberField("Prix du kWh à la maison (€)", priceHome, "0,2516") { priceHome = it }
+                        NumberField("Prix du kWh en heures creuses (€, facultatif)", priceOffPeak, "0,2068") { priceOffPeak = it }
+                        Hint(
+                            "Avec un prix heures creuses, les recharges à la maison sont comptées à ce prix. " +
+                                "Le prix d'une recharge sur borne se corrige dans Bilan > Recharges."
+                        )
+                        NumberField("Prix de l'essence (€ par litre)", fuelPrice, "1,80") { fuelPrice = it }
+                        NumberField("Consommation d'une voiture essence (L/100 km)", fuelPer100, "6,5") { fuelPer100 = it }
+                        Hint("Sert à calculer ce que tes trajets t'auraient coûté en essence, dans le bilan du mois.")
                     }
                 }
                 item {
@@ -255,6 +288,19 @@ class SettingsActivity : ComponentActivity() {
             Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f).padding(end = 12.dp))
             Switch(checked = checked, onCheckedChange = onChange)
         }
+    }
+
+    @Composable
+    private fun NumberField(label: String, value: String, example: String, onChange: (String) -> Unit) {
+        OutlinedTextField(
+            value = value, onValueChange = onChange,
+            label = { Text(label) },
+            placeholder = { Text(example) },
+            singleLine = true,
+            isError = value.isNotBlank() && parsePrice(value) == null,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 
     @Composable

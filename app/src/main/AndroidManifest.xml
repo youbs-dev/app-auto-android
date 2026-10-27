@@ -60,6 +60,12 @@
             android:label="Réglages"
             android:parentActivityName=".MainActivity" />
 
+        <activity
+            android:name=".BilanActivity"
+            android:exported="false"
+            android:label="Bilan"
+            android:parentActivityName=".MainActivity" />
+
         <service
             android:name=".TestCarAppService"
             android:exported="true">

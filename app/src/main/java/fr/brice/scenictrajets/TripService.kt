@@ -144,7 +144,10 @@ class TripService : Service() {
     private fun onLocation(loc: Location) {
         val now = System.currentTimeMillis()
         val moving = loc.hasSpeed() && loc.speed >= MOVING_SPEED_MS && loc.accuracy <= 50f
-        if (moving) lastMoving = now
+        if (moving) {
+            lastMoving = now
+            TripRecorder.lastMovingAt = now
+        }
         if (!TripRecorder.isActive && moving && now < watchUntil) {
             aaSeenDuringTrip = aaConnected
             TripRecorder.begin(this, auto = true)

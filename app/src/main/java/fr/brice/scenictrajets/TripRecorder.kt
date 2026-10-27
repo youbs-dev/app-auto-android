@@ -59,7 +59,17 @@ object TripRecorder {
     var startTime = 0L
         private set
 
+    /** Vitesse GPS actuelle et maximale du trajet en cours, en km/h. */
+    @Volatile var speedKmh: Float? = null
+        private set
+    @Volatile var maxSpeedKmh = 0f
+        private set
+    /** Dernière fois que la voiture roulait (mis à jour par TripService). */
+    @Volatile var lastMovingAt = 0L
+
     private var tripId = ""
+    /** Dernière position GPS connue, même hors trajet (pour situer les recharges). */
+    @Volatile private var lastFix: Location? = null
     private var lastLocation: Location? = null
     private var batteryStart: Float? = null
     /** Batterie au départ du trajet en cours (pour afficher ce qui a été utilisé). */
@@ -88,6 +98,8 @@ object TripRecorder {
         startTime = System.currentTimeMillis()
         tripId = idFormat.format(Date(startTime))
         distanceKm = 0.0
+        speedKmh = null
+        maxSpeedKmh = 0f
         lastLocation = null
         batteryStart = CarSnapshot.batteryPercent
         rangeStart = CarSnapshot.rangeKm
@@ -97,11 +109,35 @@ object TripRecorder {
         notifyListeners()
     }
 
+    /**
+     * Appelé à chaque nouvelle lecture de la voiture. Si le trajet a démarré avant que
+     * la voiture n'envoie ses valeurs, on prend la première lecture comme point de départ.
+     */
+    @Synchronized
+    fun onCarData() {
+        if (!isActive) return
+        if (batteryStart == null) batteryStart = CarSnapshot.batteryPercent
+        if (rangeStart == null) rangeStart = CarSnapshot.rangeKm
+        if (odometerStart == null) odometerStart = CarSnapshot.odometerKm
+    }
+
+    /** Dernière position connue (latitude, longitude), gardée aussi après la fin du trajet. */
+    fun lastKnownPosition(context: Context): Pair<Double, Double>? {
+        lastFix?.let { return it.latitude to it.longitude }
+        val p = context.getSharedPreferences("position", Context.MODE_PRIVATE)
+        if (!p.contains("lat")) return null
+        return p.getFloat("lat", 0f).toDouble() to p.getFloat("lon", 0f).toDouble()
+    }
+
     /** Termine le trajet en cours et l'ajoute à l'historique (les trajets de moins de 200 m sont ignorés). */
     @Synchronized
     fun finish(context: Context) {
         if (!isActive) return
         isActive = false
+        lastFix?.let {
+            context.getSharedPreferences("position", Context.MODE_PRIVATE).edit()
+                .putFloat("lat", it.latitude.toFloat()).putFloat("lon", it.longitude.toFloat()).apply()
+        }
         if (distanceKm < 0.2) {
             pointsFile(context, tripId).delete()
             notifyListeners()
@@ -182,7 +218,10 @@ object TripRecorder {
     /** Appelé par TripService à chaque nouvelle position GPS. */
     @Synchronized
     fun onLocation(context: Context, loc: Location) {
+        if (loc.accuracy <= 50f) lastFix = loc
         if (!isActive) return
+        speedKmh = if (loc.hasSpeed()) loc.speed * 3.6f else null
+        speedKmh?.let { if (loc.accuracy <= 30f && it > maxSpeedKmh) maxSpeedKmh = it }
         // On ignore les positions trop imprécises pour le calcul de distance.
         if (loc.accuracy <= 50f) {
             lastLocation?.let { distanceKm += it.distanceTo(loc) / 1000.0 }

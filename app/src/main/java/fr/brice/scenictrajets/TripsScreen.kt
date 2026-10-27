@@ -21,19 +21,34 @@ class TripsScreen(carContext: CarContext) : Screen(carContext) {
         }.getOrDefault(6)
 
         val list = ItemList.Builder().setNoItemsMessage("Aucun trajet pour l'instant")
-        if (trips.isNotEmpty()) {
+        val charges = runCatching { ChargeLog.charges(carContext) }.getOrDefault(emptyList())
+        val month = runCatching { TripStats.months(carContext, trips, charges).firstOrNull() }.getOrNull()
+        var used = 0
+        if (month != null) {
             list.addItem(
                 Row.Builder()
-                    .setTitle("Cette semaine : " + TripStats.total(trips, TripStats.startOfWeek()))
-                    .addText("Ce mois : " + TripStats.total(trips, TripStats.startOfMonth()))
+                    .setTitle("Ce mois : " + TripStats.monthLine(month))
+                    .addText("Cette semaine : " + TripStats.total(trips, TripStats.startOfWeek()))
                     .build()
             )
-            trips.take((limit - 1).coerceAtLeast(1)).forEach { t ->
+            used++
+        }
+        charges.firstOrNull()?.let { ch ->
+            list.addItem(
+                Row.Builder()
+                    .setTitle("⚡ Dernière recharge : " + TripStats.charge(ch))
+                    .addText(listOf(ch.place, TripStats.chargeWhen(ch)).filter { it.isNotEmpty() }.joinToString(" · "))
+                    .build()
+            )
+            used++
+        }
+        if (trips.isNotEmpty()) {
+            trips.take((limit - used).coerceAtLeast(1)).forEach { t ->
                 list.addItem(
                     Row.Builder()
                         .setTitle(TripStats.shortDate(t) + " · " + TripStats.hours(t))
                         .addText(TripStats.summary(t))
-                        .addText(TripStats.battery(t))
+                        .addText(TripStats.batteryAndCost(carContext, t))
                         .build()
                 )
             }
