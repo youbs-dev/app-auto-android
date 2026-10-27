@@ -2,233 +2,111 @@ package fr.brice.scenictrajets
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.text.InputType
-import android.widget.ArrayAdapter
-import android.widget.Button
-import android.widget.EditText
-import android.widget.Spinner
+import android.view.Menu
+import android.view.MenuItem
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.content.FileProvider
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import fr.brice.scenictrajets.Ui.show
+import java.io.File
 
-private const val ANDROID_AUTO = "com.google.android.projection.gearhead"
-private const val REQUEST_CAR_PERMISSIONS = 1
+private const val REQUEST_PERMISSIONS = 1
+private const val MAX_TRIPS_SHOWN = 60
 
 /**
- * Écran affiché sur le téléphone : l'app tourne dans Android Auto,
- * cet écran sert à accorder l'accès aux données de la voiture et à retrouver l'app.
+ * Écran du téléphone : l'état de l'app en un coup d'œil, puis l'historique des trajets.
+ * Les réglages (trajets automatiques, Dawarich, conservation) sont dans [SettingsActivity].
  */
 class MainActivity : Activity() {
 
-    private lateinit var status: TextView
-    private lateinit var tripsView: TextView
-    private lateinit var backgroundButton: Button
-    private lateinit var autoSwitch: Switch
-    private lateinit var urlField: EditText
-    private lateinit var keyField: EditText
-    private lateinit var uploadSwitch: Switch
-    private lateinit var retentionSpinner: Spinner
-    private lateinit var syncStatus: TextView
-    private val tripListener: () -> Unit = { runOnUiThread { refreshTrips() } }
+    private lateinit var statusTitle: TextView
+    private lateinit var statusText: TextView
+    private lateinit var fixButton: android.widget.Button
+    private lateinit var permissionsLink: android.widget.Button
+    private lateinit var currentCard: LinearLayout
+    private lateinit var currentText: TextView
+    private lateinit var totalsText: TextView
+    private lateinit var history: LinearLayout
+    private var fixAction: () -> Unit = {}
+    private var shownActive: Boolean? = null
+
+    private val tripListener: () -> Unit = { runOnUiThread { onTripChanged() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val pad = (24 * resources.displayMetrics.density).toInt()
+        val c = this
 
-        status = TextView(this).apply { textSize = 18f }
-
-        val askButton = Button(this).apply {
-            text = "Autoriser l'accès (voiture + localisation)"
-            setOnClickListener { askCarPermissions() }
-        }
-
-        backgroundButton = Button(this).apply {
-            text = "Autoriser la localisation « Toujours »"
-            setOnClickListener { askBackgroundLocation() }
+        statusTitle = Ui.title(c)
+        statusText = Ui.secondary(c)
+        fixButton = Ui.button(c, "", primary = true) { fixAction() }
+        permissionsLink = Ui.button(c, "Ouvrir les autorisations de l'app") { openAppSettings() }
+        val statusCard = Ui.card(c).apply {
+            addView(statusTitle); addView(statusText); addView(fixButton); addView(permissionsLink)
         }
 
-        autoSwitch = Switch(this).apply {
-            text = "Démarrer les trajets automatiquement"
-            textSize = 16f
-            isChecked = DrivingDetector.isEnabled(this@MainActivity)
-            setOnCheckedChangeListener { _, on ->
-                DrivingDetector.setEnabled(this@MainActivity, on)
-                refreshStatus()
-            }
+        currentText = Ui.text(c, size = 16f)
+        currentCard = Ui.card(c).apply {
+            addView(Ui.title(c, "🔴 Trajet en cours")); addView(currentText)
         }
 
-        val settingsButton = Button(this).apply {
-            text = "Ouvrir les autorisations de l'app"
-            setOnClickListener {
-                runCatching {
-                    startActivity(
-                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
-                    )
-                }
-            }
-        }
+        totalsText = Ui.text(c)
+        val totalsCard = Ui.card(c).apply { addView(totalsText) }
 
-        val help = TextView(this).apply {
-            textSize = 15f
-            text = """
+        history = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
 
-                L'app s'affiche sur l'écran du Scénic, via Android Auto.
-                Les autorisations ci-dessus lui permettent de lire la batterie, l'autonomie et le kilométrage, et d'enregistrer le parcours GPS des trajets.
-                Trajets automatiques : dès que le téléphone détecte que tu roules en voiture, l'enregistrement démarre. Il s'arrête quand Android Auto se déconnecte (voiture éteinte) ou après 10 minutes à l'arrêt. Un trajet sans Android Auto (bus, autre voiture) est ignoré.
-                Tu peux aussi démarrer et arrêter un trajet à la main depuis l'écran de la voiture.
-            """.trimIndent()
+        val column = Ui.column(c).apply {
+            addView(statusCard)
+            addView(currentCard)
+            addView(Ui.header(c, "RÉSUMÉ"))
+            addView(totalsCard)
+            addView(history)
         }
-
-        val tripsTitle = TextView(this).apply {
-            textSize = 20f
-            text = "\nHistorique des trajets"
-        }
-        tripsView = TextView(this).apply { textSize = 15f }
-
-        val gpxButton = Button(this).apply {
-            text = "Exporter pour Dawarich (GPX)"
-            setOnClickListener { export("gpx", "*/*") }
-        }
-        val exportButton = Button(this).apply {
-            text = "Exporter en CSV (tableur)"
-            setOnClickListener { export("csv", "text/csv") }
-        }
-
-        val autoButton = Button(this).apply {
-            text = "Ouvrir les paramètres d'Android Auto"
-            setOnClickListener { openAndroidAutoSettings() }
-        }
-
-        val syncTitle = TextView(this).apply {
-            textSize = 20f
-            text = "\nTransfert vers Dawarich"
-        }
-        urlField = EditText(this).apply {
-            hint = "Adresse du serveur (ex. https://dawarich.exemple.fr)"
-            inputType = InputType.TYPE_TEXT_VARIATION_URI
-            setText(SyncSettings.url(this@MainActivity))
-        }
-        keyField = EditText(this).apply {
-            hint = "Clé API (Dawarich > Compte > API key)"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setText(SyncSettings.apiKey(this@MainActivity))
-        }
-        uploadSwitch = Switch(this).apply {
-            text = "Envoyer chaque trajet automatiquement"
-            textSize = 16f
-            isChecked = SyncSettings.autoUpload(this@MainActivity)
-        }
-        val retentionLabel = TextView(this).apply {
-            textSize = 16f
-            text = "\nGarder les fichiers des trajets sur le téléphone :"
-        }
-        retentionSpinner = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
-                SyncSettings.RETENTION_CHOICES.map { it.second },
-            )
-            val current = SyncSettings.RETENTION_CHOICES.indexOfFirst { it.first == SyncSettings.retentionDays(this@MainActivity) }
-            setSelection(if (current >= 0) current else 2)
-        }
-        val retentionHelp = TextView(this).apply {
-            textSize = 13f
-            text = "Une copie de chaque trajet est aussi rangée dans Téléchargements/Scenic Trajets. " +
-                "Passé ce délai, les fichiers sont supprimés, jamais avant d'avoir été envoyés à Dawarich. " +
-                "L'historique ci-dessous reste."
-        }
-        val saveButton = Button(this).apply {
-            text = "Enregistrer et tester la connexion"
-            setOnClickListener { saveAndTest() }
-        }
-        val sendNowButton = Button(this).apply {
-            text = "Envoyer maintenant les trajets en attente"
-            setOnClickListener {
-                saveSettings()
-                SyncWorker.runSoon(this@MainActivity)
-                syncStatus.text = "Envoi lancé…"
-            }
-        }
-        syncStatus = TextView(this).apply { textSize = 15f }
-
-        val column = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad, pad, pad)
-            addView(status)
-            addView(askButton)
-            addView(backgroundButton)
-            addView(autoSwitch)
-            addView(settingsButton)
-            addView(help)
-            addView(autoButton)
-            addView(syncTitle)
-            addView(urlField)
-            addView(keyField)
-            addView(uploadSwitch)
-            addView(retentionLabel)
-            addView(retentionSpinner)
-            addView(retentionHelp)
-            addView(saveButton)
-            addView(sendNowButton)
-            addView(syncStatus)
-            addView(tripsTitle)
-            addView(gpxButton)
-            addView(exportButton)
-            addView(tripsView)
-        }
-        setContentView(ScrollView(this).apply { addView(column) })
+        setContentView(ScrollView(c).apply { addView(column) })
     }
 
     override fun onResume() {
         super.onResume()
         refreshStatus()
-        refreshTrips()
+        shownActive = null
+        onTripChanged()
         TripRecorder.addListener(tripListener)
         SyncWorker.schedule(this)
-    }
-
-    override fun onStop() {
-        saveSettings()
-        super.onStop()
-    }
-
-    private fun saveSettings() {
-        SyncSettings.save(
-            this, urlField.text.toString(), keyField.text.toString(), uploadSwitch.isChecked,
-            SyncSettings.RETENTION_CHOICES[retentionSpinner.selectedItemPosition].first,
-        )
-    }
-
-    private fun saveAndTest() {
-        saveSettings()
-        if (!SyncSettings.isConfigured(this)) {
-            syncStatus.text = "⚠️ Renseigne l'adresse du serveur et la clé API."
-            return
-        }
-        syncStatus.text = "Test en cours…"
-        Thread {
-            val error = Dawarich.test(this)
-            runOnUiThread {
-                syncStatus.text = if (error == null) "✅ Connexion à Dawarich réussie" else "❌ Échec : $error"
-                if (error == null) SyncWorker.runSoon(this)
-            }
-        }.start()
     }
 
     override fun onPause() {
         TripRecorder.removeListener(tripListener)
         super.onPause()
     }
+
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menu.add(0, 1, 0, "Réglages").setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+        menu.add(0, 2, 1, "Exporter tous les trajets (GPX, Dawarich)")
+        menu.add(0, 3, 2, "Exporter tous les trajets (CSV, tableur)")
+        menu.add(0, 4, 3, "Ouvrir Android Auto")
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        when (item.itemId) {
+            1 -> startActivity(Intent(this, SettingsActivity::class.java))
+            2 -> exportAll("gpx", "*/*")
+            3 -> exportAll("csv", "text/csv")
+            4 -> openAndroidAuto(this)
+            else -> return super.onOptionsItemSelected(item)
+        }
+        return true
+    }
+
+    // --- État : une seule chose à faire à la fois -------------------------------------------
 
     private fun neededPermissions(): List<String> {
         val all = CAR_PERMISSIONS.toMutableList()
@@ -245,36 +123,43 @@ class MainActivity : Activity() {
 
     private fun refreshStatus() {
         val missing = missingPermissions()
+        val auto = DrivingDetector.isEnabled(this)
         val background = DrivingDetector.hasBackgroundLocation(this)
-        val lines = mutableListOf(
-            if (missing.isEmpty()) "✅ Accès à la voiture et à la localisation : autorisé"
-            else "⚠️ ${missing.size} autorisation(s) manquante(s) : touche le premier bouton"
-        )
-        if (autoSwitch.isChecked) {
-            lines += if (background) "✅ Trajets automatiques : prêts"
-            else "⚠️ Trajets automatiques : choisis « Toujours autoriser » pour la localisation (deuxième bouton)"
+        val syncError = if (SyncSettings.isConfigured(this)) TripRecorder.lastError(this) else null
+
+        when {
+            missing.isNotEmpty() -> {
+                statusTitle.text = "⚠️ Il manque des autorisations"
+                statusText.text = "L'app doit pouvoir lire la batterie de la voiture et enregistrer le parcours GPS."
+                fixButton.text = "Autoriser l'accès"
+                fixAction = { requestPermissions(missing.toTypedArray(), REQUEST_PERMISSIONS) }
+            }
+            auto && !background && Build.VERSION.SDK_INT >= 29 -> {
+                statusTitle.text = "⚠️ Encore une étape"
+                statusText.text = "Pour démarrer les trajets tout seuls, choisis « Toujours autoriser » pour la localisation."
+                fixButton.text = "Autoriser la localisation « Toujours »"
+                fixAction = {
+                    requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), REQUEST_PERMISSIONS)
+                }
+            }
+            syncError != null -> {
+                statusTitle.text = "⚠️ Envoi vers Dawarich en échec"
+                statusText.text = "$syncError\nLes trajets restent sur le téléphone et repartiront tout seuls."
+                fixButton.text = "Voir les réglages Dawarich"
+                fixAction = { startActivity(Intent(this, SettingsActivity::class.java)) }
+            }
+            else -> {
+                statusTitle.text = "✅ Tout est prêt"
+                statusText.text = if (auto) "Les trajets s'enregistrent tout seuls dès que tu roules avec Android Auto."
+                else "Démarre un trajet depuis l'écran du Scénic (trajets automatiques désactivés dans les réglages)."
+                fixAction = {}
+            }
         }
-        status.text = lines.joinToString("\n")
-        backgroundButton.visibility =
-            if (autoSwitch.isChecked && !background) android.view.View.VISIBLE else android.view.View.GONE
+        val needsFix = missing.isNotEmpty() || (auto && !background && Build.VERSION.SDK_INT >= 29) || syncError != null
+        fixButton.show(needsFix)
+        permissionsLink.show(missing.isNotEmpty())
         // Enregistre (ou ré-enregistre) la détection de conduite dès que les autorisations le permettent.
         DrivingDetector.register(this)
-    }
-
-    /** Android impose une demande séparée, après la localisation normale (page des réglages sur Android 11+). */
-    private fun askBackgroundLocation() {
-        if (Build.VERSION.SDK_INT < 29) return
-        if (!TripRecorder.hasLocationPermission(this)) {
-            askCarPermissions()
-            return
-        }
-        requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), REQUEST_CAR_PERMISSIONS)
-    }
-
-    private fun askCarPermissions() {
-        val missing = missingPermissions()
-        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), REQUEST_CAR_PERMISSIONS)
-        else refreshStatus()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -282,53 +167,97 @@ class MainActivity : Activity() {
         refreshStatus()
     }
 
-    private fun refreshTrips() {
-        val df = SimpleDateFormat("EEE d MMM HH:mm", Locale.FRANCE)
-        val lines = mutableListOf<String>()
-        if (TripRecorder.isActive) {
-            lines += String.format(Locale.FRANCE, "🔴 Trajet en cours : %.1f km\n", TripRecorder.distanceKm)
+    private fun openAppSettings() {
+        runCatching {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
         }
-        val trips = TripRecorder.trips(this)
-        val configured = SyncSettings.isConfigured(this)
-        TripRecorder.lastError(this)?.let { if (configured) syncStatus.text = "❌ Dernier envoi échoué : $it" }
-        if (trips.isEmpty() && !TripRecorder.isActive) lines += "Aucun trajet pour l'instant."
-        trips.forEach { t ->
-            val batt = if (t.batteryStart != null && t.batteryEnd != null) {
-                String.format(Locale.FRANCE, "batterie %.0f %% → %.0f %% (−%.1f pts)",
-                    t.batteryStart, t.batteryEnd, t.batteryStart - t.batteryEnd)
-            } else "batterie non lue"
-            val cloud = when {
-                !configured -> ""
-                TripRecorder.isSent(this, t.id) -> " · ☁️ envoyé"
-                else -> " · ⏳ à envoyer"
-            }
-            lines += String.format(Locale.FRANCE, "%s%s\n%.1f km · %d min · %s\n",
-                df.format(Date(t.start)), cloud, t.distanceKm, t.durationMin, batt)
-        }
-        tripsView.text = lines.joinToString("\n")
     }
 
-    /** Partage trajets.csv et les fichiers de points GPS (mail, Drive, etc.). */
-    /** Partage les fichiers d'une extension donnée (mail, Drive, Nextcloud…). */
-    private fun export(ext: String, mime: String) {
-        val files = TripRecorder.dir(this).listFiles { f -> f.name.endsWith(".$ext") }?.sortedBy { it.name }
-        if (files.isNullOrEmpty()) {
-            tripsView.text = "Aucun fichier à exporter pour l'instant.\n\n" + tripsView.text
+    // --- Trajets ---------------------------------------------------------------------------
+
+    /** Appelé à chaque position GPS : on ne relit l'historique que quand un trajet commence ou finit. */
+    private fun onTripChanged() {
+        val active = TripRecorder.isActive
+        currentCard.show(active)
+        if (active) currentText.text = TripStats.current()
+        if (shownActive != active) {
+            shownActive = active
+            refreshHistory()
+        }
+    }
+
+    private fun refreshHistory() {
+        val trips = TripRecorder.trips(this)
+        totalsText.text = "Cette semaine : " + TripStats.total(trips, TripStats.startOfWeek()) +
+            "\nCe mois : " + TripStats.total(trips, TripStats.startOfMonth())
+
+        history.removeAllViews()
+        if (trips.isEmpty()) {
+            history.addView(Ui.header(this, "HISTORIQUE"))
+            history.addView(Ui.card(this).apply {
+                addView(Ui.secondary(this@MainActivity,
+                    "Aucun trajet pour l'instant. Ils apparaîtront ici après chaque trajet de plus de 200 m."))
+            })
             return
         }
-        val uris = ArrayList(files.map { FileProvider.getUriForFile(this, "$packageName.fichiers", it) })
+        val configured = SyncSettings.isConfigured(this)
+        var lastDay = ""
+        trips.take(MAX_TRIPS_SHOWN).forEach { t ->
+            val day = TripStats.dayLabel(t.start)
+            if (day != lastDay) {
+                history.addView(Ui.header(this, day.uppercase()))
+                lastDay = day
+            }
+            val cloud = when {
+                !configured -> ""
+                TripRecorder.isSent(this, t.id) -> "  ☁️"
+                else -> "  ⏳"
+            }
+            history.addView(Ui.card(this).apply {
+                addView(Ui.text(this@MainActivity, TripStats.hours(t) + cloud, 16f))
+                addView(Ui.text(this@MainActivity, TripStats.summary(t)))
+                addView(Ui.secondary(this@MainActivity, TripStats.battery(t)))
+                isClickable = true
+                setOnClickListener { tripMenu(t) }
+            })
+        }
+        if (trips.size > MAX_TRIPS_SHOWN) {
+            history.addView(Ui.secondary(this,
+                "Les trajets plus anciens sont dans l'export CSV (menu ⋮)."))
+        }
+    }
+
+    /** Toucher un trajet : le partager seul. */
+    private fun tripMenu(t: Trip) {
+        AlertDialog.Builder(this)
+            .setTitle(TripStats.shortDate(t) + " · " + TripStats.hours(t))
+            .setItems(arrayOf("Partager le parcours (GPX)", "Partager les points (CSV)")) { _, which ->
+                val f = if (which == 0) TripRecorder.gpxFile(this, t.id) else TripRecorder.pointsFile(this, t.id)
+                share(listOf(f), if (which == 0) "*/*" else "text/csv")
+            }
+            .setNegativeButton("Fermer", null)
+            .show()
+    }
+
+    /** Partage les fichiers d'une extension donnée (mail, Drive, Nextcloud…). */
+    private fun exportAll(ext: String, mime: String) {
+        val files = TripRecorder.dir(this).listFiles { f -> f.name.endsWith(".$ext") }?.sortedBy { it.name }
+        share(files.orEmpty(), mime)
+    }
+
+    private fun share(files: List<File>, mime: String) {
+        val existing = files.filter { it.exists() }
+        if (existing.isEmpty()) {
+            Toast.makeText(this, "Fichier introuvable (supprimé après la durée de conservation ?)", Toast.LENGTH_LONG).show()
+            return
+        }
+        val uris = ArrayList(existing.map { FileProvider.getUriForFile(this, "$packageName.fichiers", it) })
         val send = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
             type = mime
             putExtra(Intent.EXTRA_SUBJECT, "Trajets Scénic")
             putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        runCatching { startActivity(Intent.createChooser(send, "Exporter les trajets")) }
-    }
-
-    private fun openAndroidAutoSettings() {
-        val intent = packageManager.getLaunchIntentForPackage(ANDROID_AUTO)
-            ?: Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$ANDROID_AUTO"))
-        runCatching { startActivity(intent) }
+        runCatching { startActivity(Intent.createChooser(send, "Partager")) }
     }
 }

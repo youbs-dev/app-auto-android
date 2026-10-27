@@ -1,0 +1,9 @@
+<resources>
+    <!-- Thème clair ; la version sombre (values-night) suit le réglage du téléphone. -->
+    <style name="Theme.ScenicTrajets" parent="android:Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">#1F3A5F</item>
+        <item name="android:colorPrimaryDark">#152A45</item>
+        <item name="android:colorAccent">#2E7DD7</item>
+        <item name="android:windowBackground">#F2F3F6</item>
+    </style>
+</resources>

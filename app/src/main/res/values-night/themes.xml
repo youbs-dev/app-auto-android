@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.ScenicTrajets" parent="android:Theme.Material">
+        <item name="android:colorPrimary">#1B2A3D</item>
+        <item name="android:colorPrimaryDark">#000000</item>
+        <item name="android:colorAccent">#6CB1FF</item>
+        <item name="android:windowBackground">#101114</item>
+    </style>
+</resources>
