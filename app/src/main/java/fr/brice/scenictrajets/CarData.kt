@@ -1,12 +1,8 @@
 package fr.brice.scenictrajets
 
 import android.content.pm.PackageManager
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import androidx.car.app.CarContext
-import androidx.car.app.CarToast
-import androidx.car.app.Screen
 import androidx.car.app.hardware.CarHardwareManager
 import androidx.car.app.hardware.common.CarValue
 import androidx.car.app.hardware.common.OnCarDataAvailableListener
@@ -16,69 +12,59 @@ import androidx.car.app.hardware.info.EnergyProfile
 import androidx.car.app.hardware.info.Mileage
 import androidx.car.app.hardware.info.Model
 import androidx.car.app.hardware.info.Speed
-import androidx.car.app.model.Action
-import androidx.car.app.model.ItemList
-import androidx.car.app.model.ListTemplate
-import androidx.car.app.model.Row
-import androidx.car.app.model.Template
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.DefaultLifecycleObserver
-import androidx.lifecycle.LifecycleOwner
 import java.util.Locale
 
 private const val TAG = "ScenicTest"
 
-private val CAR_PERMISSIONS = listOf(
+internal val CAR_PERMISSIONS = listOf(
     "com.google.android.gms.permission.CAR_FUEL",
     "com.google.android.gms.permission.CAR_SPEED",
     "com.google.android.gms.permission.CAR_MILEAGE",
 )
 
 /**
- * Écran de diagnostic : affiche en direct ce que la voiture transmet à Android Auto.
- * Chaque ligne indique soit la valeur, soit la raison pour laquelle elle manque.
+ * Lit en continu ce que la voiture transmet à Android Auto (batterie, autonomie, compteur…).
+ * Les textes servent à l'écran Diagnostic ; les valeurs sont copiées dans [CarSnapshot] pour les trajets.
  */
-class VehicleDataScreen(carContext: CarContext) : Screen(carContext) {
+class CarData(private val carContext: CarContext, private val onChange: () -> Unit) {
 
     private val executor = ContextCompat.getMainExecutor(carContext)
     private val carInfo: CarInfo =
         carContext.getCarService(CarHardwareManager::class.java).carInfo
 
-    private var vehicule = "en attente…"
-    private var batterie = "en attente…"
-    private var autonomie = "en attente…"
-    private var vitesse = "en attente…"
-    private var kilometrage = "en attente…"
+    var vehicule = "en attente…"; private set
+    var batterie = "en attente…"; private set
+    var autonomie = "en attente…"; private set
+    var vitesse = "en attente…"; private set
+    var kilometrage = "en attente…"; private set
 
-    private val handler = Handler(Looper.getMainLooper())
-    private var refreshPending = false
+    private var listening = false
 
     private val energyListener = OnCarDataAvailableListener<EnergyLevel> { e ->
+        CarSnapshot.batteryPercent = ok(e.batteryPercent)
+        CarSnapshot.rangeKm = ok(e.rangeRemainingMeters)?.div(1000f)
         batterie = format(e.batteryPercent) { String.format(Locale.FRANCE, "%.1f %%", it) }
         autonomie = format(e.rangeRemainingMeters) { String.format(Locale.FRANCE, "%.0f km", it / 1000f) }
         Log.i(TAG, "batterie=$batterie autonomie=$autonomie")
-        refresh()
+        onChange()
     }
 
     private val speedListener = OnCarDataAvailableListener<Speed> { s ->
         vitesse = format(s.rawSpeedMetersPerSecond) { String.format(Locale.FRANCE, "%.0f km/h", it * 3.6f) }
-        refresh()
+        onChange()
     }
 
     private val mileageListener = OnCarDataAvailableListener<Mileage> { m ->
-        kilometrage = format(m.odometerMeters) { String.format(Locale.FRANCE, "%.1f km", it / 1000f) }
-        Log.i(TAG, "kilometrage=$kilometrage")
-        refresh()
+        // Malgré son nom, la valeur arrive déjà en km sur le Scénic (13 300 km vérifiés au tableau de bord).
+        CarSnapshot.odometerKm = ok(m.odometerMeters)
+        kilometrage = format(m.odometerMeters) { String.format(Locale.FRANCE, "%,.0f km", it) }
+        onChange()
     }
 
-    init {
-        lifecycle.addObserver(object : DefaultLifecycleObserver {
-            override fun onStart(owner: LifecycleOwner) = startListening()
-            override fun onStop(owner: LifecycleOwner) = stopListening()
-        })
-    }
-
-    private fun startListening() {
+    fun start() {
+        if (listening) return
+        listening = true
         safely("modèle") {
             carInfo.fetchModel(executor) { m: Model ->
                 val nom = listOfNotNull(m.manufacturer.value, m.name.value, m.year.value?.toString())
@@ -92,22 +78,28 @@ class VehicleDataScreen(carContext: CarContext) : Screen(carContext) {
         safely("kilométrage") { carInfo.addMileageListener(executor, mileageListener) }
     }
 
+    fun stop() {
+        listening = false
+        runCatching { carInfo.removeEnergyLevelListener(energyListener) }
+        runCatching { carInfo.removeSpeedListener(speedListener) }
+        runCatching { carInfo.removeMileageListener(mileageListener) }
+    }
+
+    fun restart() { stop(); start() }
+
+    fun missingPermissions() = CAR_PERMISSIONS.filter {
+        ContextCompat.checkSelfPermission(carContext, it) != PackageManager.PERMISSION_GRANTED
+    }
+
     private fun fetchEnergyProfile() {
         safely("profil énergie") {
             carInfo.fetchEnergyProfile(executor) { p: EnergyProfile ->
                 val types = p.fuelTypes.value
                     ?.joinToString { if (it == EnergyProfile.FUEL_TYPE_ELECTRIC) "électrique" else "type $it" }
                 vehicule += " · " + (types ?: statusText(p.fuelTypes.status))
-                Log.i(TAG, "vehicule=$vehicule")
-                refresh()
+                onChange()
             }
         }
-    }
-
-    private fun stopListening() {
-        runCatching { carInfo.removeEnergyLevelListener(energyListener) }
-        runCatching { carInfo.removeSpeedListener(speedListener) }
-        runCatching { carInfo.removeMileageListener(mileageListener) }
     }
 
     /** Une permission manquante ne doit pas faire planter l'app : on l'affiche à la place. */
@@ -127,12 +119,8 @@ class VehicleDataScreen(carContext: CarContext) : Screen(carContext) {
         }
     }
 
-    /** Limite les rafraîchissements de l'écran (Android Auto en limite le nombre). */
-    private fun refresh() {
-        if (refreshPending) return
-        refreshPending = true
-        handler.postDelayed({ refreshPending = false; invalidate() }, 1000)
-    }
+    private fun ok(v: CarValue<Float>): Float? =
+        if (v.status == CarValue.STATUS_SUCCESS) v.value else null
 
     private fun <T> format(v: CarValue<T>, fmt: (T) -> String): String {
         val value = v.value
@@ -145,47 +133,4 @@ class VehicleDataScreen(carContext: CarContext) : Screen(carContext) {
         CarValue.STATUS_UNAVAILABLE -> "indisponible pour l'instant"
         else -> "inconnu"
     }
-
-    private fun missingPermissions() = CAR_PERMISSIONS.filter {
-        ContextCompat.checkSelfPermission(carContext, it) != PackageManager.PERMISSION_GRANTED
-    }
-
-    override fun onGetTemplate(): Template {
-        val missing = missingPermissions()
-        val permRow = Row.Builder()
-            .setTitle("Permissions")
-            .addText(if (missing.isEmpty()) "toutes accordées" else "${missing.size} manquante(s) : toucher pour demander")
-        if (missing.isNotEmpty()) {
-            permRow.setOnClickListener {
-                carContext.requestPermissions(missing) { granted, rejected ->
-                    CarToast.makeText(
-                        carContext,
-                        "Accordées : ${granted.size}, refusées : ${rejected.size}",
-                        CarToast.LENGTH_LONG,
-                    ).show()
-                    stopListening()
-                    startListening()
-                    invalidate()
-                }
-            }
-        }
-
-        val list = ItemList.Builder()
-            .addItem(row("Véhicule", vehicule))
-            .addItem(row("Batterie", batterie))
-            .addItem(row("Autonomie", autonomie))
-            .addItem(row("Vitesse", vitesse))
-            .addItem(row("Kilométrage", kilometrage))
-            .addItem(permRow.build())
-            .build()
-
-        return ListTemplate.Builder()
-            .setTitle("Données du véhicule")
-            .setHeaderAction(Action.APP_ICON)
-            .setSingleList(list)
-            .build()
-    }
-
-    private fun row(title: String, value: String) =
-        Row.Builder().setTitle(title).addText(value).build()
 }

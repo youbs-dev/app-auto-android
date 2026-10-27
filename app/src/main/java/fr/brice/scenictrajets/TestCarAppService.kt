@@ -13,6 +13,10 @@ class TestCarAppService : CarAppService() {
     override fun createHostValidator(): HostValidator = HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
 
     override fun onCreateSession(): Session = object : Session() {
-        override fun onCreateScreen(intent: Intent): Screen = VehicleDataScreen(carContext)
+        override fun onCreateScreen(intent: Intent): Screen {
+            // App ouverte dans la voiture : on surveille le départ pour démarrer le trajet tout seul.
+            if (DrivingDetector.isEnabled(carContext)) TripService.send(carContext, TripService.ACTION_WATCH)
+            return HomeScreen(carContext)
+        }
     }
 }
