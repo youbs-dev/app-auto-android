@@ -17,7 +17,7 @@ jobs:
       - name: Compiler l'APK debug
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleDebug
       - name: Compiler le bundle Google Play (si la clé d'envoi est configurée)
         env:
           UPLOAD_KEYSTORE_B64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
@@ -25,7 +25,7 @@ jobs:
         run: |
           if [ -z "$UPLOAD_KEYSTORE_B64" ]; then echo "Pas de clé d'envoi : bundle ignoré."; exit 0; fi
           echo "$UPLOAD_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.keystore"
-          UPLOAD_KEYSTORE_PATH="$RUNNER_TEMP/upload.keystore" ./gradlew bundleRelease --stacktrace
+          UPLOAD_KEYSTORE_PATH="$RUNNER_TEMP/upload.keystore" ./gradlew bundleRelease
       - uses: actions/upload-artifact@v4
         with:
           name: scenic-trajets-debug
