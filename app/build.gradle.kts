@@ -1,12 +1,11 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
     namespace = "fr.brice.scenictrajets"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "fr.youbs.scenictrajets"
@@ -51,12 +50,6 @@ android {
     }
 }
 
-kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-    }
-}
-
 dependencies {
     // Car App Library : interface sur l'écran de la voiture + accès aux données du véhicule
     implementation("androidx.car.app:app:1.7.0")
@@ -67,8 +60,8 @@ dependencies {
     // Envoi vers Dawarich en arrière-plan, dès qu'Internet est disponible
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     // Écran du téléphone : Jetpack Compose avec Material 3 Expressive.
-    // alpha24 (Compose 1.12) : les versions suivantes exigent AGP 9.1 et compileSdk 37.
+    // Ces versions exigent AGP 9.1 et compileSdk 37.
     implementation("androidx.activity:activity-compose:1.11.0")
-    implementation("androidx.compose.material3:material3:1.5.0-alpha24")
+    implementation("androidx.compose.material3:material3:1.5.0-alpha29")
     implementation("androidx.compose.material:material-icons-core:1.7.8")
 }
