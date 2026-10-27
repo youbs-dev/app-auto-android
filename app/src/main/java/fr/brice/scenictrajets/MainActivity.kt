@@ -10,6 +10,7 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -55,7 +56,6 @@ import androidx.core.content.FileProvider
 import java.io.File
 import java.util.Locale
 
-private const val REQUEST_PERMISSIONS = 1
 private const val MAX_TRIPS_SHOWN = 60
 
 /** Ce que le bandeau d'état doit dire, et le seul bouton utile. */
@@ -99,12 +99,12 @@ class MainActivity : ComponentActivity() {
         super.onPause()
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        statusTick++
-        DrivingDetector.register(this)
-    }
+    /** Après la fenêtre d'autorisation d'Android : on remet le bandeau à jour. */
+    private val permissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            statusTick++
+            DrivingDetector.register(this)
+        }
 
     // --- Écran ------------------------------------------------------------------------------
 
@@ -339,14 +339,14 @@ class MainActivity : ComponentActivity() {
             missing.isNotEmpty() -> Status(
                 false, "Il manque des autorisations",
                 "L'app doit pouvoir lire la batterie de la voiture et enregistrer le parcours GPS.",
-                "Autoriser l'accès", { requestPermissions(missing.toTypedArray(), REQUEST_PERMISSIONS) },
+                "Autoriser l'accès", { permissionLauncher.launch(missing.toTypedArray()) },
                 showAppSettings = true,
             )
             auto && !background && Build.VERSION.SDK_INT >= 29 -> Status(
                 false, "Encore une étape",
                 "Pour démarrer les trajets tout seuls, choisis « Toujours autoriser » pour la localisation.",
                 "Autoriser la localisation « Toujours »",
-                { requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), REQUEST_PERMISSIONS) },
+                { permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) },
             )
             syncError != null -> Status(
                 false, "Envoi vers Dawarich en échec",
