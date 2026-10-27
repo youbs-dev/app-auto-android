@@ -117,8 +117,12 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
             .setTitle("🔴 " + TripStats.km(live.distanceKm) + " · " + TripStats.duration(live.durationMin))
             .addText(TripStats.liveSpeed(live))
             .addText(
-                TripPlaces.liveStart?.let { "Départ : $it" }
-                    ?: if (TripRecorder.isAuto) "Trajet en cours (automatique)" else "Trajet en cours"
+                listOfNotNull(
+                    TripPlaces.liveStart?.let { "Départ : $it" },
+                    TripWeather.liveTemp?.let { TripWeather.label(it) },
+                ).joinToString(" · ").ifEmpty {
+                    if (TripRecorder.isAuto) "Trajet en cours (automatique)" else "Trajet en cours"
+                }
             )
             .build()
     } else {

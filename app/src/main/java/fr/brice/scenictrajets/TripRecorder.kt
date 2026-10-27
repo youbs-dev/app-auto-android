@@ -160,6 +160,7 @@ object TripRecorder {
         LocalBackup.save(context, pointsFile(context, tripId))
         runCatching { SyncWorker.runSoon(context) }
         TripPlaces.resolveMissingSoon(context)
+        TripWeather.resolveMissingSoon(context)
         notifyListeners()
     }
 
@@ -228,7 +229,10 @@ object TripRecorder {
         speedKmh?.let { if (loc.accuracy <= 30f && it > maxSpeedKmh) maxSpeedKmh = it }
         // On ignore les positions trop imprécises pour le calcul de distance.
         if (loc.accuracy <= 50f) {
-            if (lastLocation == null) TripPlaces.onTripStart(context, startTime, loc.latitude, loc.longitude)
+            if (lastLocation == null) {
+                TripPlaces.onTripStart(context, startTime, loc.latitude, loc.longitude)
+                TripWeather.onTripStart(startTime, loc.latitude, loc.longitude)
+            }
             lastLocation?.let { distanceKm += it.distanceTo(loc) / 1000.0 }
             lastLocation = loc
         }

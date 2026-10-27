@@ -94,6 +94,7 @@ class MainActivity : ComponentActivity() {
         ChargeLog.addListener(chargeListener)
         SyncWorker.schedule(this)
         TripPlaces.resolveMissingSoon(this)
+        TripWeather.resolveMissingSoon(this)
         // Enregistre (ou ré-enregistre) la détection de conduite dès que les autorisations le permettent.
         DrivingDetector.register(this)
     }
@@ -217,7 +218,7 @@ class MainActivity : ComponentActivity() {
                             Text("Départ : " + p.start)
                             Text("Arrivée : " + p.end)
                         }
-                        Text(TripStats.summary(t))
+                        Text(TripStats.summaryWithWeather(this@MainActivity, t))
                         Text(TripStats.batteryAndCost(this@MainActivity, t))
                         Spacer(Modifier.height(8.dp))
                         TextButton(onClick = {
@@ -225,6 +226,12 @@ class MainActivity : ComponentActivity() {
                             startActivity(Intent(this@MainActivity, TripMapActivity::class.java).putExtra(TripMapActivity.EXTRA_ID, t.id))
                         }) {
                             Text("Voir la carte du trajet")
+                        }
+                        if (configured) {
+                            val sent = TripRecorder.isSent(this@MainActivity, t.id)
+                            TextButton(onClick = { selected = null; pushToDawarich(t) }) {
+                                Text(if (sent) "Renvoyer à Dawarich" else "Envoyer à Dawarich maintenant")
+                            }
                         }
                         TextButton(onClick = { selected = null; share(listOf(TripRecorder.gpxFile(this@MainActivity, t.id)), "*/*") }) {
                             Text("Partager le parcours (GPX)")
@@ -277,7 +284,10 @@ class MainActivity : ComponentActivity() {
                     if (TripRecorder.isAuto) "Trajet en cours (automatique)" else "Trajet en cours",
                     style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
                 )
-                TripPlaces.liveStart?.let { Text("Départ : $it", style = MaterialTheme.typography.bodyMedium) }
+                listOfNotNull(
+                    TripPlaces.liveStart?.let { "Départ : $it" },
+                    TripWeather.liveTemp?.let { "Dehors : " + TripWeather.label(it) },
+                ).takeIf { it.isNotEmpty() }?.let { Text(it.joinToString(" · "), style = MaterialTheme.typography.bodyMedium) }
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(
                         live.speedKmh?.let { String.format(Locale.FRANCE, "%.0f", it) } ?: "–",
@@ -397,7 +407,7 @@ class MainActivity : ComponentActivity() {
                 TripPlaces.label(this@MainActivity, t.id)?.let {
                     Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
                 }
-                Text(TripStats.summary(t), style = MaterialTheme.typography.bodyLarge)
+                Text(TripStats.summaryWithWeather(this@MainActivity, t), style = MaterialTheme.typography.bodyLarge)
                 Text(TripStats.batteryAndCost(this@MainActivity, t), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -451,6 +461,40 @@ class MainActivity : ComponentActivity() {
         runCatching {
             startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
         }
+    }
+
+    // --- Envoi manuel vers Dawarich ----------------------------------------------------------
+
+    /** Envoie un trajet tout de suite, sans attendre la tâche automatique, et dit ce qui s'est passé. */
+    private fun pushToDawarich(t: Trip) {
+        if (!TripRecorder.pointsFile(this, t.id).exists()) {
+            Toast.makeText(this, "Les points de ce trajet ne sont plus sur le téléphone.", Toast.LENGTH_LONG).show()
+            return
+        }
+        Toast.makeText(this, "Envoi vers Dawarich…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val error = try {
+                Dawarich.uploadTrip(this, t.id)
+                if (!TripRecorder.isSent(this, t.id)) TripRecorder.markSent(this, t.id)
+                null
+            } catch (e: Exception) {
+                e.message ?: e.javaClass.simpleName
+            }
+            runOnUiThread {
+                if (error == null) {
+                    Toast.makeText(this, "✅ Trajet envoyé à Dawarich", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(
+                        this,
+                        "❌ Envoi impossible : $error\nTu peux aussi partager le GPX et l'importer dans Dawarich.",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    // Le trajet reste en attente : la tâche automatique réessaiera dès qu'Internet revient.
+                    SyncWorker.runSoon(this)
+                }
+                tripTick++
+            }
+        }.start()
     }
 
     // --- Partage ----------------------------------------------------------------------------

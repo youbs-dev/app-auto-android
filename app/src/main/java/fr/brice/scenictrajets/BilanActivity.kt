@@ -73,7 +73,9 @@ class BilanActivity : ComponentActivity() {
         var tab by remember { mutableIntStateOf(0) }
         var editing by remember { mutableStateOf<Charge?>(null) }
         val charges = remember(tick) { ChargeLog.charges(this) }
-        val months = remember(tick) { TripStats.months(this, TripRecorder.trips(this), charges) }
+        val trips = remember(tick) { TripRecorder.trips(this) }
+        val months = remember(tick) { TripStats.months(this, trips, charges) }
+        val bands = remember(tick) { TripWeather.bands(this, trips) }
 
         Scaffold(
             modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
@@ -110,6 +112,7 @@ class BilanActivity : ComponentActivity() {
                     }
                 }
                 if (tab == 0) {
+                    if (bands.isNotEmpty()) item { WeatherCard(bands) }
                     if (months.isEmpty()) item { Empty("Le bilan apparaîtra après le premier trajet.") }
                     items(months, key = { it.label }) { MonthCard(it) }
                     item {
@@ -176,6 +179,30 @@ class BilanActivity : ComponentActivity() {
                             String.format(Locale.FRANCE, " · %.0f kWh · ", m.chargedKwh) + TripStats.euros(m.chargeCost)
                     )
                 }
+            }
+        }
+    }
+
+    /** Conso moyenne par tranche de température : montre ce que coûte le froid. */
+    @Composable
+    private fun WeatherCard(bands: List<TripWeather.Band>) {
+        Card(
+            shape = MaterialTheme.shapes.extraLarge,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        ) {
+            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Conso selon la température", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                bands.forEach { b ->
+                    Row {
+                        Text(b.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                        Text(
+                            (b.kwhPer100?.let { String.format(Locale.FRANCE, "%.1f kWh/100 km", it) } ?: "trop peu de km") +
+                                (if (b.trips == 1) " · 1 trajet" else " · ${b.trips} trajets"),
+                            style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+                Hint("Température extérieure au milieu de chaque trajet (Open-Meteo). Le chauffage et la batterie froide font monter la conso en hiver.")
             }
         }
     }

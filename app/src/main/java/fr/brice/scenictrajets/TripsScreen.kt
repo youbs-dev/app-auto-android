@@ -50,7 +50,7 @@ class TripsScreen(carContext: CarContext) : Screen(carContext) {
                         .setTitle(places ?: (TripStats.shortDate(t) + " · " + TripStats.hours(t)))
                         .addText(
                             (if (places != null) TripStats.shortDate(t) + " · " + TripStats.hours(t) + " · " else "") +
-                                TripStats.summary(t)
+                                TripStats.summaryWithWeather(carContext, t)
                         )
                         .addText(TripStats.batteryAndCost(carContext, t))
                         .build()

@@ -39,6 +39,10 @@ object TripStats {
 
     fun shortDate(t: Trip) = shortDay.format(Date(t.start)).replaceFirstChar { it.uppercase() }
 
+    /** « 23,4 km · 35 min · 8 °C » : la ligne principale avec la température, si elle est connue. */
+    fun summaryWithWeather(c: android.content.Context, t: Trip) =
+        summary(t) + (TripWeather.of(c, t.id)?.let { " · " + TripWeather.label(it) } ?: "")
+
     /** Ligne principale : « 23,4 km · 35 min ». */
     fun summary(t: Trip) = km(t.distanceKm) + " · " + duration(t.durationMin)
 
