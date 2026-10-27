@@ -2,6 +2,7 @@ package fr.brice.scenictrajets
 
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -11,34 +12,48 @@ import android.widget.ScrollView
 import android.widget.TextView
 
 private const val ANDROID_AUTO = "com.google.android.projection.gearhead"
+private const val REQUEST_CAR_PERMISSIONS = 1
 
 /**
- * Écran affiché sur le téléphone : l'app elle-même tourne dans Android Auto,
- * cet écran sert seulement à la retrouver et à expliquer comment l'activer.
+ * Écran affiché sur le téléphone : l'app tourne dans Android Auto,
+ * cet écran sert à accorder l'accès aux données de la voiture et à retrouver l'app.
  */
 class MainActivity : Activity() {
+
+    private lateinit var status: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val pad = (24 * resources.displayMetrics.density).toInt()
 
-        val message = TextView(this).apply {
-            textSize = 17f
+        status = TextView(this).apply { textSize = 18f }
+
+        val askButton = Button(this).apply {
+            text = "Autoriser l'accès aux données de la voiture"
+            setOnClickListener { askCarPermissions() }
+        }
+
+        val settingsButton = Button(this).apply {
+            text = "Ouvrir les autorisations de l'app"
+            setOnClickListener {
+                runCatching {
+                    startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                    )
+                }
+            }
+        }
+
+        val help = TextView(this).apply {
+            textSize = 15f
             text = """
-                L'app est bien installée ✅
 
-                Elle s'affiche sur l'écran du Scénic, pas sur le téléphone.
-
-                Pour la voir dans la voiture :
-                1. Ouvre les paramètres d'Android Auto (bouton ci-dessous).
-                2. Touche 10 fois « Version » tout en bas pour activer le mode développeur.
-                3. Menu ⋮ > Paramètres pour les développeurs > coche « Sources inconnues ».
-                4. Branche le téléphone : « Scénic Trajets » apparaît dans le lanceur d'apps d'Android Auto (l'icône en grille).
-                5. Dans l'app, touche « Permissions » pour autoriser la lecture des données de la voiture.
+                L'app s'affiche sur l'écran du Scénic, via Android Auto.
+                Les autorisations ci-dessus lui permettent de lire la batterie, l'autonomie, la vitesse et le kilométrage.
             """.trimIndent()
         }
 
-        val button = Button(this).apply {
+        val autoButton = Button(this).apply {
             text = "Ouvrir les paramètres d'Android Auto"
             setOnClickListener { openAndroidAutoSettings() }
         }
@@ -46,10 +61,42 @@ class MainActivity : Activity() {
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
-            addView(message)
-            addView(button)
+            addView(status)
+            addView(askButton)
+            addView(settingsButton)
+            addView(help)
+            addView(autoButton)
         }
         setContentView(ScrollView(this).apply { addView(column) })
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshStatus()
+    }
+
+    private fun missingPermissions() = CAR_PERMISSIONS.filter {
+        checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun refreshStatus() {
+        val missing = missingPermissions()
+        status.text = if (missing.isEmpty()) {
+            "✅ Accès aux données de la voiture : autorisé"
+        } else {
+            "⚠️ Accès aux données de la voiture : ${missing.size} autorisation(s) manquante(s)"
+        }
+    }
+
+    private fun askCarPermissions() {
+        val missing = missingPermissions()
+        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), REQUEST_CAR_PERMISSIONS)
+        else refreshStatus()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        refreshStatus()
     }
 
     private fun openAndroidAutoSettings() {

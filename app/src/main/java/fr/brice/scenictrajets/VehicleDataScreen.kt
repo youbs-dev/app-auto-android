@@ -19,6 +19,7 @@ import androidx.car.app.hardware.info.Speed
 import androidx.car.app.model.Action
 import androidx.car.app.model.ItemList
 import androidx.car.app.model.ListTemplate
+import androidx.car.app.model.ParkedOnlyOnClickListener
 import androidx.car.app.model.Row
 import androidx.car.app.model.Template
 import androidx.core.content.ContextCompat
@@ -28,7 +29,7 @@ import java.util.Locale
 
 private const val TAG = "ScenicTest"
 
-private val CAR_PERMISSIONS = listOf(
+internal val CAR_PERMISSIONS = listOf(
     "com.google.android.gms.permission.CAR_FUEL",
     "com.google.android.gms.permission.CAR_SPEED",
     "com.google.android.gms.permission.CAR_MILEAGE",
@@ -146,28 +147,58 @@ class VehicleDataScreen(carContext: CarContext) : Screen(carContext) {
         else -> "inconnu"
     }
 
+    private var lastMissingCount = -1
+    private var permissionError: String? = null
+
+    /** Demande les autorisations depuis la voiture ; en cas d'échec, l'erreur s'affiche au lieu de planter. */
+    private fun requestCarPermissions(missing: List<String>) {
+        try {
+            carContext.requestPermissions(missing) { granted, rejected ->
+                CarToast.makeText(
+                    carContext,
+                    "Accordées : ${granted.size}, refusées : ${rejected.size}",
+                    CarToast.LENGTH_LONG,
+                ).show()
+                stopListening()
+                startListening()
+                invalidate()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Demande d'autorisations impossible", e)
+            permissionError = e.javaClass.simpleName + (e.message?.let { " : $it" } ?: "")
+            CarToast.makeText(
+                carContext,
+                "Ouvre l'app Scénic Trajets sur le téléphone pour autoriser l'accès",
+                CarToast.LENGTH_LONG,
+            ).show()
+            invalidate()
+        }
+    }
+
     private fun missingPermissions() = CAR_PERMISSIONS.filter {
         ContextCompat.checkSelfPermission(carContext, it) != PackageManager.PERMISSION_GRANTED
     }
 
     override fun onGetTemplate(): Template {
         val missing = missingPermissions()
+        if (lastMissingCount >= 0 && missing.size < lastMissingCount) {
+            // Des autorisations viennent d'être accordées (par exemple depuis le téléphone) : on relance la lecture.
+            stopListening()
+            startListening()
+        }
+        lastMissingCount = missing.size
+
         val permRow = Row.Builder()
             .setTitle("Permissions")
-            .addText(if (missing.isEmpty()) "toutes accordées" else "${missing.size} manquante(s) : toucher pour demander")
-        if (missing.isNotEmpty()) {
-            permRow.setOnClickListener {
-                carContext.requestPermissions(missing) { granted, rejected ->
-                    CarToast.makeText(
-                        carContext,
-                        "Accordées : ${granted.size}, refusées : ${rejected.size}",
-                        CarToast.LENGTH_LONG,
-                    ).show()
-                    stopListening()
-                    startListening()
-                    invalidate()
+            .addText(
+                when {
+                    missing.isEmpty() -> "toutes accordées"
+                    permissionError != null -> "erreur : $permissionError"
+                    else -> "${missing.size} manquante(s) : toucher pour demander, ou ouvrir l'app sur le téléphone"
                 }
-            }
+            )
+        if (missing.isNotEmpty()) {
+            permRow.setOnClickListener(ParkedOnlyOnClickListener.create { requestCarPermissions(missing) })
         }
 
         val list = ItemList.Builder()

@@ -11,8 +11,8 @@ android {
         applicationId = "fr.youbs.scenictrajets"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3-test"
+        versionCode = 4
+        versionName = "0.4-test"
     }
 
     // Clé de debug fixe, versionnée : chaque compilation GitHub signe pareil,
@@ -52,7 +52,7 @@ android {
 
 dependencies {
     // Car App Library : interface sur l'écran de la voiture + accès aux données du véhicule
-    implementation("androidx.car.app:app:1.4.0")
-    implementation("androidx.car.app:app-projected:1.4.0")
+    implementation("androidx.car.app:app:1.7.0")
+    implementation("androidx.car.app:app-projected:1.7.0")
     implementation("androidx.core:core-ktx:1.13.1")
 }
