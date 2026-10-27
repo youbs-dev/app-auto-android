@@ -32,6 +32,7 @@
         android:allowBackup="false"
         android:icon="@drawable/ic_car"
         android:label="@string/app_name"
+        android:theme="@style/Theme.ScenicTrajets"
         android:usesCleartextTraffic="true">
 
         <meta-data
@@ -52,6 +53,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="Réglages"
+            android:parentActivityName=".MainActivity" />
 
         <service
             android:name=".TestCarAppService"

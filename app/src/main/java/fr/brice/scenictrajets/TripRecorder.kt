@@ -62,6 +62,8 @@ object TripRecorder {
     private var tripId = ""
     private var lastLocation: Location? = null
     private var batteryStart: Float? = null
+    /** Batterie au départ du trajet en cours (pour afficher ce qui a été utilisé). */
+    val batteryAtStart: Float? get() = batteryStart
     private var rangeStart: Float? = null
     private var odometerStart: Float? = null
     private val listeners = mutableSetOf<() -> Unit>()
