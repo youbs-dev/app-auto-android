@@ -11,6 +11,7 @@ import android.provider.Settings
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import androidx.core.content.FileProvider
 import java.text.SimpleDateFormat
@@ -28,6 +29,8 @@ class MainActivity : Activity() {
 
     private lateinit var status: TextView
     private lateinit var tripsView: TextView
+    private lateinit var backgroundButton: Button
+    private lateinit var autoSwitch: Switch
     private val tripListener: () -> Unit = { runOnUiThread { refreshTrips() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -39,6 +42,21 @@ class MainActivity : Activity() {
         val askButton = Button(this).apply {
             text = "Autoriser l'accès (voiture + localisation)"
             setOnClickListener { askCarPermissions() }
+        }
+
+        backgroundButton = Button(this).apply {
+            text = "Autoriser la localisation « Toujours »"
+            setOnClickListener { askBackgroundLocation() }
+        }
+
+        autoSwitch = Switch(this).apply {
+            text = "Démarrer les trajets automatiquement"
+            textSize = 16f
+            isChecked = DrivingDetector.isEnabled(this@MainActivity)
+            setOnCheckedChangeListener { _, on ->
+                DrivingDetector.setEnabled(this@MainActivity, on)
+                refreshStatus()
+            }
         }
 
         val settingsButton = Button(this).apply {
@@ -58,7 +76,8 @@ class MainActivity : Activity() {
 
                 L'app s'affiche sur l'écran du Scénic, via Android Auto.
                 Les autorisations ci-dessus lui permettent de lire la batterie, l'autonomie et le kilométrage, et d'enregistrer le parcours GPS des trajets.
-                Démarre et arrête un trajet depuis l'écran de la voiture.
+                Trajets automatiques : dès que le téléphone détecte que tu roules en voiture, l'enregistrement démarre. Il s'arrête quand Android Auto se déconnecte (voiture éteinte) ou après 10 minutes à l'arrêt. Un trajet sans Android Auto (bus, autre voiture) est ignoré.
+                Tu peux aussi démarrer et arrêter un trajet à la main depuis l'écran de la voiture.
             """.trimIndent()
         }
 
@@ -68,9 +87,13 @@ class MainActivity : Activity() {
         }
         tripsView = TextView(this).apply { textSize = 15f }
 
+        val gpxButton = Button(this).apply {
+            text = "Exporter pour Dawarich (GPX)"
+            setOnClickListener { export("gpx", "*/*") }
+        }
         val exportButton = Button(this).apply {
-            text = "Exporter les trajets en CSV"
-            setOnClickListener { exportCsv() }
+            text = "Exporter en CSV (tableur)"
+            setOnClickListener { export("csv", "text/csv") }
         }
 
         val autoButton = Button(this).apply {
@@ -83,10 +106,13 @@ class MainActivity : Activity() {
             setPadding(pad, pad, pad, pad)
             addView(status)
             addView(askButton)
+            addView(backgroundButton)
+            addView(autoSwitch)
             addView(settingsButton)
             addView(help)
             addView(autoButton)
             addView(tripsTitle)
+            addView(gpxButton)
             addView(exportButton)
             addView(tripsView)
         }
@@ -106,9 +132,12 @@ class MainActivity : Activity() {
     }
 
     private fun neededPermissions(): List<String> {
-        val all = CAR_PERMISSIONS + Manifest.permission.ACCESS_FINE_LOCATION +
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        return if (Build.VERSION.SDK_INT >= 33) all + Manifest.permission.POST_NOTIFICATIONS else all
+        val all = CAR_PERMISSIONS.toMutableList()
+        all += Manifest.permission.ACCESS_FINE_LOCATION
+        all += Manifest.permission.ACCESS_COARSE_LOCATION
+        if (Build.VERSION.SDK_INT >= 29) all += Manifest.permission.ACTIVITY_RECOGNITION
+        if (Build.VERSION.SDK_INT >= 33) all += Manifest.permission.POST_NOTIFICATIONS
+        return all
     }
 
     private fun missingPermissions() = neededPermissions().filter {
@@ -117,11 +146,30 @@ class MainActivity : Activity() {
 
     private fun refreshStatus() {
         val missing = missingPermissions()
-        status.text = if (missing.isEmpty()) {
-            "✅ Accès à la voiture et à la localisation : autorisé"
-        } else {
-            "⚠️ ${missing.size} autorisation(s) manquante(s) : touche le bouton ci-dessous"
+        val background = DrivingDetector.hasBackgroundLocation(this)
+        val lines = mutableListOf(
+            if (missing.isEmpty()) "✅ Accès à la voiture et à la localisation : autorisé"
+            else "⚠️ ${missing.size} autorisation(s) manquante(s) : touche le premier bouton"
+        )
+        if (autoSwitch.isChecked) {
+            lines += if (background) "✅ Trajets automatiques : prêts"
+            else "⚠️ Trajets automatiques : choisis « Toujours autoriser » pour la localisation (deuxième bouton)"
         }
+        status.text = lines.joinToString("\n")
+        backgroundButton.visibility =
+            if (autoSwitch.isChecked && !background) android.view.View.VISIBLE else android.view.View.GONE
+        // Enregistre (ou ré-enregistre) la détection de conduite dès que les autorisations le permettent.
+        DrivingDetector.register(this)
+    }
+
+    /** Android impose une demande séparée, après la localisation normale (page des réglages sur Android 11+). */
+    private fun askBackgroundLocation() {
+        if (Build.VERSION.SDK_INT < 29) return
+        if (!TripRecorder.hasLocationPermission(this)) {
+            askCarPermissions()
+            return
+        }
+        requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), REQUEST_CAR_PERMISSIONS)
     }
 
     private fun askCarPermissions() {
@@ -155,15 +203,16 @@ class MainActivity : Activity() {
     }
 
     /** Partage trajets.csv et les fichiers de points GPS (mail, Drive, etc.). */
-    private fun exportCsv() {
-        val files = TripRecorder.dir(this).listFiles { f -> f.name.endsWith(".csv") }?.sortedBy { it.name }
+    /** Partage les fichiers d'une extension donnée (mail, Drive, Nextcloud…). */
+    private fun export(ext: String, mime: String) {
+        val files = TripRecorder.dir(this).listFiles { f -> f.name.endsWith(".$ext") }?.sortedBy { it.name }
         if (files.isNullOrEmpty()) {
             tripsView.text = "Aucun fichier à exporter pour l'instant.\n\n" + tripsView.text
             return
         }
         val uris = ArrayList(files.map { FileProvider.getUriForFile(this, "$packageName.fichiers", it) })
         val send = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-            type = "text/csv"
+            type = mime
             putExtra(Intent.EXTRA_SUBJECT, "Trajets Scénic")
             putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)

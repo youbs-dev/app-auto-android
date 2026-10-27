@@ -1,7 +1,6 @@
 package fr.brice.scenictrajets
 
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.Manifest
 import android.location.Location
@@ -45,12 +44,15 @@ object TripRecorder {
         "id;debut;fin;duree_min;distance_km;batterie_debut_pct;batterie_fin_pct;" +
             "autonomie_debut_km;autonomie_fin_km;compteur_debut_km;compteur_fin_km"
     private const val POINTS_HEADER =
-        "heure;latitude;longitude;vitesse_kmh;precision_m;batterie_pct;autonomie_km"
+        "heure;latitude;longitude;vitesse_kmh;precision_m;batterie_pct;autonomie_km;altitude_m"
 
     private val idFormat = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.FRANCE)
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.FRANCE)
 
     @Volatile var isActive = false
+        private set
+    /** Trajet démarré automatiquement (et non avec le bouton). */
+    @Volatile var isAuto = false
         private set
     @Volatile var distanceKm = 0.0
         private set
@@ -76,11 +78,11 @@ object TripRecorder {
     fun removeListener(l: () -> Unit) { synchronized(listeners) { listeners -= l } }
     private fun notifyListeners() { synchronized(listeners) { listeners.toList() }.forEach { it() } }
 
+    /** Démarre un trajet. Appelé par TripService (automatiquement ou depuis le bouton). */
     @Synchronized
-    fun start(context: Context) {
+    fun begin(context: Context, auto: Boolean) {
         if (isActive) return
-        // Sans localisation, le service au premier plan serait refusé par Android.
-        if (!hasLocationPermission(context)) return
+        isAuto = auto
         startTime = System.currentTimeMillis()
         tripId = idFormat.format(Date(startTime))
         distanceKm = 0.0
@@ -90,15 +92,19 @@ object TripRecorder {
         odometerStart = CarSnapshot.odometerKm
         pointsFile(context, tripId).writeText(POINTS_HEADER + "\n")
         isActive = true
-        ContextCompat.startForegroundService(context, Intent(context, TripService::class.java))
         notifyListeners()
     }
 
+    /** Termine le trajet en cours et l'ajoute à l'historique (les trajets de moins de 200 m sont ignorés). */
     @Synchronized
-    fun stop(context: Context) {
+    fun finish(context: Context) {
         if (!isActive) return
         isActive = false
-        context.stopService(Intent(context, TripService::class.java))
+        if (distanceKm < 0.2) {
+            pointsFile(context, tripId).delete()
+            notifyListeners()
+            return
+        }
         val summary = summaryFile(context)
         if (!summary.exists()) summary.writeText(SUMMARY_HEADER + "\n")
         val trip = Trip(
@@ -107,7 +113,40 @@ object TripRecorder {
             odometerStart, CarSnapshot.odometerKm,
         )
         summary.appendText(toCsv(trip) + "\n")
+        runCatching { writeGpx(context, tripId) }
         notifyListeners()
+    }
+
+    /** Abandonne le trajet en cours sans l'enregistrer (par exemple : pas dans le Scénic). */
+    @Synchronized
+    fun discard(context: Context) {
+        if (!isActive) return
+        isActive = false
+        pointsFile(context, tripId).delete()
+        notifyListeners()
+    }
+
+    fun gpxFile(context: Context, id: String) = File(dir(context), "trajet_$id.gpx")
+
+    /** Convertit les points d'un trajet en GPX, importable dans Dawarich. */
+    fun writeGpx(context: Context, id: String) {
+        val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }
+        val sb = StringBuilder()
+        sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+        sb.append("<gpx version=\"1.1\" creator=\"Scenic Trajets\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n")
+        sb.append("  <trk><name>Trajet $id</name><type>car</type><trkseg>\n")
+        pointsFile(context, id).readLines().drop(1).forEach { line ->
+            val c = line.split(";")
+            if (c.size < 3) return@forEach
+            val time = runCatching { dateFormat.parse(c[0]) }.getOrNull() ?: return@forEach
+            sb.append("    <trkpt lat=\"${c[1]}\" lon=\"${c[2]}\">")
+            if (c.size > 7 && c[7].isNotEmpty()) sb.append("<ele>${c[7]}</ele>")
+            sb.append("<time>${iso.format(time)}</time></trkpt>\n")
+        }
+        sb.append("  </trkseg></trk>\n</gpx>\n")
+        gpxFile(context, id).writeText(sb.toString())
     }
 
     /** Appelé par TripService à chaque nouvelle position GPS. */
@@ -127,6 +166,7 @@ object TripRecorder {
             "%.0f".format(Locale.US, loc.accuracy),
             fmt(CarSnapshot.batteryPercent),
             fmt(CarSnapshot.rangeKm),
+            if (loc.hasAltitude()) "%.0f".format(Locale.US, loc.altitude) else "",
         ).joinToString(";")
         pointsFile(context, tripId).appendText(line + "\n")
         notifyListeners()

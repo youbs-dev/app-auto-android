@@ -244,11 +244,15 @@ class VehicleDataScreen(carContext: CarContext) : Screen(carContext) {
         val builder = Row.Builder()
         if (TripRecorder.isActive) {
             val min = (System.currentTimeMillis() - TripRecorder.startTime) / 60_000
+            val mode = if (TripRecorder.isAuto) "automatique" else "manuel"
             builder.setTitle("⏹ Arrêter le trajet")
-                .addText(String.format(Locale.FRANCE, "En cours : %.1f km · %d min", TripRecorder.distanceKm, min))
+                .addText(String.format(Locale.FRANCE, "En cours (%s) : %.1f km · %d min", mode, TripRecorder.distanceKm, min))
         } else {
             builder.setTitle("▶ Démarrer un trajet")
-                .addText("Enregistre le parcours GPS, la batterie et l'autonomie")
+                .addText(
+                    if (DrivingDetector.isEnabled(carContext)) "Démarrage automatique dès que la voiture roule"
+                    else "Enregistre le parcours GPS, la batterie et l'autonomie"
+                )
         }
         builder.setOnClickListener { toggleTrip() }
         return builder.build()
@@ -257,7 +261,7 @@ class VehicleDataScreen(carContext: CarContext) : Screen(carContext) {
     private fun toggleTrip() {
         try {
             if (TripRecorder.isActive) {
-                TripRecorder.stop(carContext)
+                TripService.send(carContext, TripService.ACTION_STOP)
                 CarToast.makeText(carContext, "Trajet enregistré", CarToast.LENGTH_SHORT).show()
             } else if (!TripRecorder.hasLocationPermission(carContext)) {
                 CarToast.makeText(
@@ -266,7 +270,7 @@ class VehicleDataScreen(carContext: CarContext) : Screen(carContext) {
                     CarToast.LENGTH_LONG,
                 ).show()
             } else {
-                TripRecorder.start(carContext)
+                TripService.send(carContext, TripService.ACTION_START)
                 CarToast.makeText(carContext, "Trajet démarré", CarToast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {

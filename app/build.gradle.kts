@@ -11,8 +11,8 @@ android {
         applicationId = "fr.youbs.scenictrajets"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.5-test"
+        versionCode = 6
+        versionName = "0.6-test"
     }
 
     // Clé de debug fixe, versionnée : chaque compilation GitHub signe pareil,
@@ -55,4 +55,6 @@ dependencies {
     implementation("androidx.car.app:app:1.7.0")
     implementation("androidx.car.app:app-projected:1.7.0")
     implementation("androidx.core:core-ktx:1.13.1")
+    // Détection « en voiture » pour démarrer les trajets automatiquement
+    implementation("com.google.android.gms:play-services-location:21.3.0")
 }
