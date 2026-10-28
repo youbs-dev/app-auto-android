@@ -159,10 +159,10 @@ class SettingsActivity : ComponentActivity() {
                                     selected = ThemePrefs.mode == m,
                                     onClick = { ThemePrefs.setMode(c, m) },
                                     shape = SegmentedButtonDefaults.itemShape(i, modes.size),
-                                ) { Text(m.label) }
+                                ) { Text(m.label, maxLines = 1, softWrap = false) }
                             }
                         }
-                        Hint("« Automatique » suit le mode clair ou sombre du téléphone.")
+                        Hint("« Auto » suit le mode clair ou sombre du téléphone.")
                         if (ThemePrefs.dynamicAvailable) {
                             SwitchRow("Couleurs du fond d'écran", ThemePrefs.dynamic) { ThemePrefs.setDynamic(c, it) }
                             Hint("Reprend les couleurs de ton fond d'écran (Material You) au lieu du bleu Scénic.")

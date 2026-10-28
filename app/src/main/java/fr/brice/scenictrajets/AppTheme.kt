@@ -22,7 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
 /** Choix du thème : suivre le téléphone, toujours clair ou toujours sombre. */
-enum class ThemeMode(val label: String) { AUTO("Automatique"), LIGHT("Clair"), DARK("Sombre") }
+enum class ThemeMode(val label: String) { AUTO("Auto"), LIGHT("Clair"), DARK("Sombre") }
 
 object ThemePrefs {
     private const val PREFS = "apparence"
