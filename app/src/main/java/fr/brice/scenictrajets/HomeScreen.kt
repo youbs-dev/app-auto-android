@@ -9,10 +9,12 @@ import androidx.car.app.Screen
 import androidx.car.app.model.Action
 import androidx.car.app.model.ActionStrip
 import androidx.car.app.model.CarColor
+import androidx.car.app.model.CarIcon
 import androidx.car.app.model.Pane
 import androidx.car.app.model.PaneTemplate
 import androidx.car.app.model.Row
 import androidx.car.app.model.Template
+import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import java.util.Locale
@@ -100,8 +102,13 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
                             .build()
                     )
                     .addAction(
+                        // Une seule action avec texte est permise ici : Diagnostic n'a qu'une icône.
                         Action.Builder()
-                            .setTitle("Diagnostic")
+                            .setIcon(
+                                CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_diagnostic))
+                                    .setTint(CarColor.DEFAULT)
+                                    .build()
+                            )
                             .setOnClickListener { screenManager.push(DiagnosticScreen(carContext, this)) }
                             .build()
                     )
