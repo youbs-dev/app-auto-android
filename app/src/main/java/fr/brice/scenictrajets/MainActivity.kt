@@ -48,6 +48,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -78,6 +79,10 @@ class MainActivity : ComponentActivity() {
     /** Change à chaque position GPS ou à chaque retour sur l'écran : Compose redessine. */
     private var tripTick by mutableIntStateOf(0)
     private var statusTick by mutableIntStateOf(0)
+    /** Résultat d'un envoi manuel vers Dawarich, affiché en entier dans une fenêtre. */
+    private var pushResult by mutableStateOf<PushResult?>(null)
+
+    private class PushResult(val trip: Trip, val ok: Boolean, val message: String, val suggestedUrl: String? = null)
     private val tripListener: () -> Unit = { runOnUiThread { tripTick++ } }
     private val chargeListener: () -> Unit = { runOnUiThread { statusTick++ } }
 
@@ -207,6 +212,8 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        pushResult?.let { r -> PushResultDialog(r) }
 
         selected?.let { t ->
             AlertDialog(
@@ -473,29 +480,71 @@ class MainActivity : ComponentActivity() {
         }
         Toast.makeText(this, "Envoi vers Dawarich…", Toast.LENGTH_SHORT).show()
         Thread {
-            var count = 0
-            val error = try {
-                count = Dawarich.uploadTrip(this, t.id)
+            val result = try {
+                val count = Dawarich.uploadTrip(this, t.id)
                 if (!TripRecorder.isSent(this, t.id)) TripRecorder.markSent(this, t.id)
-                null
+                PushResult(t, true, "$count points envoyés à Dawarich.")
+            } catch (e: RedirectException) {
+                PushResult(
+                    t, false,
+                    "Le serveur ne répond pas à l'adresse des réglages :\n${SyncSettings.url(this)}\n\n" +
+                        "Il renvoie vers :\n${e.location}",
+                    e.suggestedUrl,
+                )
             } catch (e: Exception) {
-                e.message ?: e.javaClass.simpleName
+                PushResult(t, false, e.message ?: e.javaClass.simpleName)
             }
             runOnUiThread {
-                if (error == null) {
-                    Toast.makeText(this, "✅ $count points envoyés à Dawarich", Toast.LENGTH_LONG).show()
-                } else {
-                    Toast.makeText(
-                        this,
-                        "❌ Envoi impossible : $error\nTu peux aussi partager le GPX et l'importer dans Dawarich.",
-                        Toast.LENGTH_LONG,
-                    ).show()
-                    // Le trajet reste en attente : la tâche automatique réessaiera dès qu'Internet revient.
-                    SyncWorker.runSoon(this)
-                }
+                pushResult = result
+                // Le trajet reste en attente : la tâche automatique réessaiera dès qu'Internet revient.
+                if (!result.ok) SyncWorker.runSoon(this)
                 tripTick++
             }
         }.start()
+    }
+
+    @Composable
+    private fun PushResultDialog(r: PushResult) {
+        AlertDialog(
+            onDismissRequest = { pushResult = null },
+            title = { Text(if (r.ok) "✅ Trajet envoyé" else "❌ Envoi impossible") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SelectionContainer { Text(r.message) }
+                    r.suggestedUrl?.let { url ->
+                        Text("Utiliser plutôt cette adresse :", fontWeight = FontWeight.SemiBold)
+                        SelectionContainer { Text(url) }
+                        if (url.startsWith("http://")) {
+                            Text(
+                                "Attention : en http://, la clé API passe sans chiffrement. Mieux vaut régler le serveur pour qu'il réponde en https://.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                    if (!r.ok && r.suggestedUrl == null) {
+                        Text(
+                            "Tu peux aussi partager le GPX du trajet et l'importer dans Dawarich.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                val url = r.suggestedUrl
+                if (url != null) {
+                    TextButton(onClick = {
+                        SyncSettings.setUrl(this@MainActivity, url)
+                        pushResult = null
+                        pushToDawarich(r.trip)
+                    }) { Text("Utiliser et réessayer") }
+                } else {
+                    TextButton(onClick = { pushResult = null }) { Text("OK") }
+                }
+            },
+            dismissButton = {
+                if (r.suggestedUrl != null) TextButton(onClick = { pushResult = null }) { Text("Annuler") }
+            },
+        )
     }
 
     // --- Partage ----------------------------------------------------------------------------

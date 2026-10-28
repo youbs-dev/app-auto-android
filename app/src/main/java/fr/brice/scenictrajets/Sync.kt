@@ -43,6 +43,8 @@ object SyncSettings {
     fun retentionDays(c: Context) = prefs(c).getInt("retention_jours", 60)
     fun isConfigured(c: Context) = url(c).isNotEmpty() && apiKey(c).isNotEmpty()
 
+    fun setUrl(c: Context, url: String) = prefs(c).edit().putString("dawarich_url", url.trim()).apply()
+
     fun save(c: Context, url: String, key: String, auto: Boolean, retentionDays: Int) {
         prefs(c).edit()
             .putString("dawarich_url", url.trim())
@@ -52,6 +54,11 @@ object SyncSettings {
             .apply()
     }
 }
+
+/** Le serveur renvoie vers une autre adresse. [suggestedUrl] est l'adresse de base à mettre dans les réglages. */
+class RedirectException(val location: String, val suggestedUrl: String?, code: Int) : Exception(
+    "le serveur renvoie vers $location ($code)"
+)
 
 /** Trajet sans point à envoyer : ce n'est pas une panne, la tâche automatique passe au suivant. */
 class NothingToSend(message: String) : Exception(message)
@@ -126,12 +133,17 @@ object Dawarich {
             conn.setRequestProperty("Authorization", "Bearer " + SyncSettings.apiKey(context))
             conn.outputStream.use { it.write(JSONObject().put("locations", locations).toString().toByteArray()) }
             val code = conn.responseCode
+            if (code in 300..399) {
+                val raw = conn.getHeaderField("Location") ?: "une adresse inconnue"
+                val absolute = runCatching { URL(url, raw).toString() }.getOrDefault(raw)
+                // Adresse de base : on retire le chemin de l'API pour retrouver ce qu'il faut mettre dans les réglages.
+                val base = absolute.substringBefore("?").substringBefore("/api/v1/").trimEnd('/')
+                    .takeIf { it.startsWith("http") && it != SyncSettings.url(context) }
+                throw RedirectException(absolute, base, code)
+            }
             if (code !in 200..299) {
                 throw IllegalStateException(
                     when (code) {
-                        301, 302, 303, 307, 308 ->
-                            "le serveur redirige vers ${conn.getHeaderField("Location") ?: "une autre adresse"} ($code) : " +
-                                "mets cette adresse dans les réglages (souvent https:// au lieu de http://)"
                         401 -> "clé API refusée (401)"
                         404 -> "adresse introuvable (404) : vérifie l'adresse du serveur"
                         else -> "le serveur a répondu $code"
