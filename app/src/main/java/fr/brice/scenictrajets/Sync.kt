@@ -53,6 +53,9 @@ object SyncSettings {
     }
 }
 
+/** Trajet sans point à envoyer : ce n'est pas une panne, la tâche automatique passe au suivant. */
+class NothingToSend(message: String) : Exception(message)
+
 /** Envoi des points vers Dawarich, par l'API « Overland » (POST /api/v1/overland/batches). */
 object Dawarich {
 
@@ -68,19 +71,26 @@ object Dawarich {
         e.message ?: e.javaClass.simpleName
     }
 
-    /** Envoie tous les points d'un trajet, par lots de 500. */
-    fun uploadTrip(context: Context, id: String) {
+    /** Envoie tous les points d'un trajet, par lots de 500. Renvoie le nombre de points envoyés. */
+    fun uploadTrip(context: Context, id: String): Int {
         val file = TripRecorder.pointsFile(context, id)
-        if (!file.exists()) return
+        if (!file.exists()) throw NothingToSend("les points de ce trajet ne sont plus sur le téléphone")
         val batch = JSONArray()
+        var sent = 0
         file.readLines().drop(1).forEach { line ->
             toFeature(line)?.let { batch.put(it) }
             if (batch.length() >= 500) {
                 post(context, batch)
+                sent += batch.length()
                 while (batch.length() > 0) batch.remove(0)
             }
         }
-        if (batch.length() > 0) post(context, batch)
+        if (batch.length() > 0) {
+            post(context, batch)
+            sent += batch.length()
+        }
+        if (sent == 0) throw NothingToSend("aucun point GPS valide dans ce trajet")
+        return sent
     }
 
     private fun toFeature(line: String): JSONObject? {
@@ -108,6 +118,9 @@ object Dawarich {
             conn.requestMethod = "POST"
             conn.connectTimeout = 15_000
             conn.readTimeout = 30_000
+            // Une redirection (http → https, page de connexion d'un proxy…) transformerait l'envoi
+            // en simple lecture de page, qui répond « 200 » sans rien enregistrer.
+            conn.instanceFollowRedirects = false
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("Authorization", "Bearer " + SyncSettings.apiKey(context))
@@ -116,10 +129,23 @@ object Dawarich {
             if (code !in 200..299) {
                 throw IllegalStateException(
                     when (code) {
+                        301, 302, 303, 307, 308 ->
+                            "le serveur redirige vers ${conn.getHeaderField("Location") ?: "une autre adresse"} ($code) : " +
+                                "mets cette adresse dans les réglages (souvent https:// au lieu de http://)"
                         401 -> "clé API refusée (401)"
                         404 -> "adresse introuvable (404) : vérifie l'adresse du serveur"
                         else -> "le serveur a répondu $code"
                     }
+                )
+            }
+            // Dawarich répond en JSON. Une page web à la place veut dire qu'on ne parle pas à l'API
+            // (page de connexion d'un proxy, mauvaise adresse…) : rien n'a été enregistré.
+            val body = runCatching { conn.inputStream.bufferedReader().readText() }.getOrDefault("").trim()
+            val type = conn.contentType.orEmpty()
+            if (type.contains("html", ignoreCase = true) || body.startsWith("<")) {
+                throw IllegalStateException(
+                    "le serveur a renvoyé une page web au lieu de l'API Dawarich ($code) : " +
+                        "vérifie l'adresse et qu'aucune page de connexion ne protège le serveur"
                 )
             }
         } finally {
@@ -172,6 +198,9 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                     Dawarich.uploadTrip(ctx, trip.id)
                     TripRecorder.markSent(ctx, trip.id)
                     Log.i(TAG, "Trajet ${trip.id} envoyé à Dawarich")
+                } catch (e: NothingToSend) {
+                    Log.i(TAG, "Trajet ${trip.id} : ${e.message}")
+                    TripRecorder.markSent(ctx, trip.id)
                 } catch (e: Exception) {
                     Log.w(TAG, "Envoi du trajet ${trip.id} échoué", e)
                     TripRecorder.setLastError(ctx, e.message ?: e.javaClass.simpleName)

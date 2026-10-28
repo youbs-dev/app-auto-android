@@ -473,8 +473,9 @@ class MainActivity : ComponentActivity() {
         }
         Toast.makeText(this, "Envoi vers Dawarich…", Toast.LENGTH_SHORT).show()
         Thread {
+            var count = 0
             val error = try {
-                Dawarich.uploadTrip(this, t.id)
+                count = Dawarich.uploadTrip(this, t.id)
                 if (!TripRecorder.isSent(this, t.id)) TripRecorder.markSent(this, t.id)
                 null
             } catch (e: Exception) {
@@ -482,7 +483,7 @@ class MainActivity : ComponentActivity() {
             }
             runOnUiThread {
                 if (error == null) {
-                    Toast.makeText(this, "✅ Trajet envoyé à Dawarich", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "✅ $count points envoyés à Dawarich", Toast.LENGTH_LONG).show()
                 } else {
                     Toast.makeText(
                         this,
