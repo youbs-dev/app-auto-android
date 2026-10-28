@@ -19,6 +19,8 @@ import androidx.car.app.model.CarLocation
 import androidx.car.app.model.Distance
 import androidx.car.app.model.DistanceSpan
 import androidx.car.app.model.ItemList
+import androidx.car.app.model.ListTemplate
+import androidx.car.app.model.MessageTemplate
 import androidx.car.app.model.Metadata
 import androidx.car.app.model.Place
 import androidx.car.app.model.PlaceListMapTemplate
@@ -137,6 +139,7 @@ object ChargerSearch {
             val center = e.optJSONObject("center")
             val la = if (e.has("lat")) e.getDouble("lat") else center?.optDouble("lat") ?: continue
             val lo = if (e.has("lon")) e.getDouble("lon") else center?.optDouble("lon") ?: continue
+            if (la.isNaN() || lo.isNaN()) continue
             val tags = e.optJSONObject("tags") ?: JSONObject()
             if (tags.optString("access") == "private") continue
             val d = FloatArray(1)
@@ -197,7 +200,52 @@ class ChargersScreen(carContext: CarContext) : Screen(carContext) {
         }
     }
 
-    override fun onGetTemplate(): Template {
+    /**
+     * Si Android Auto refuse la carte, on essaie une simple liste, puis un message avec l'erreur :
+     * l'app ne plante plus et on sait ce qui ne va pas.
+     */
+    override fun onGetTemplate(): Template = try {
+        mapTemplate()
+    } catch (e: Exception) {
+        Log.e("ScenicBornes", "Carte des bornes refusée", e)
+        try {
+            listTemplate()
+        } catch (e2: Exception) {
+            Log.e("ScenicBornes", "Liste des bornes refusée", e2)
+            MessageTemplate.Builder("Bornes indisponibles.\n${e.javaClass.simpleName} : ${e.message ?: ""}")
+                .setTitle("Bornes proches")
+                .setHeaderAction(Action.BACK)
+                .build()
+        }
+    }
+
+    /** Liste sans carte : secours si la carte n'est pas acceptée par la voiture. */
+    private fun listTemplate(): Template {
+        val b = ListTemplate.Builder().setTitle("Bornes proches").setHeaderAction(Action.BACK)
+        val list = chargers ?: return b.setLoading(true).build()
+        val items = ItemList.Builder().setNoItemsMessage(error ?: "Aucune borne à moins de 15 km")
+        list.take(limit()).forEach { ch ->
+            items.addItem(
+                Row.Builder()
+                    .setTitle(ch.name + " · " + distanceText(ch))
+                    .addText(ch.details)
+                    .setOnClickListener { navigate(ch) }
+                    .build()
+            )
+        }
+        return b.setSingleList(items.build()).build()
+    }
+
+    private fun limit() = runCatching {
+        carContext.getCarService(ConstraintManager::class.java)
+            .getContentLimit(ConstraintManager.CONTENT_LIMIT_TYPE_PLACE_LIST)
+    }.getOrDefault(6).coerceIn(1, 20)
+
+    private fun distanceText(ch: Charger) =
+        if (ch.distanceM < 1000) String.format(Locale.FRANCE, "%.0f m", ch.distanceM)
+        else String.format(Locale.FRANCE, "%.1f km", ch.distanceM / 1000f)
+
+    private fun mapTemplate(): Template {
         val builder = PlaceListMapTemplate.Builder()
             .setTitle("Bornes proches")
             .setHeaderAction(Action.BACK)
@@ -206,10 +254,7 @@ class ChargersScreen(carContext: CarContext) : Screen(carContext) {
         if (list == null) {
             return builder.setLoading(true).build()
         }
-        val limit = runCatching {
-            carContext.getCarService(ConstraintManager::class.java)
-                .getContentLimit(ConstraintManager.CONTENT_LIMIT_TYPE_PLACE_LIST)
-        }.getOrDefault(6)
+        val limit = limit()
         val items = ItemList.Builder().setNoItemsMessage(error ?: "Aucune borne à moins de 15 km")
         list.take(limit).forEachIndexed { i, ch ->
             val title = SpannableString("  · " + ch.name)
