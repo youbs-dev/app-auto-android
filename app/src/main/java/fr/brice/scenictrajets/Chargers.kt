@@ -183,7 +183,8 @@ class ChargersScreen(carContext: CarContext) : Screen(carContext) {
     private var origin: Pair<Double, Double>? = null
 
     init {
-        origin = TripPlaces.currentPosition(carContext)
+        origin = runCatching { TripPlaces.currentPosition(carContext) }
+            .onFailure { Log.e("ScenicBornes", "Position impossible", it) }.getOrNull()
         val o = origin
         if (o == null) {
             error = "Position inconnue : autorise la localisation dans l'app sur le téléphone"

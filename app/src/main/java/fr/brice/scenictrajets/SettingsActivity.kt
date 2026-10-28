@@ -270,6 +270,24 @@ class SettingsActivity : ComponentActivity() {
                         )
                     }
                 }
+                CrashLog.last(c)?.let { crash ->
+                    item {
+                        Section("Dernier plantage") {
+                            Hint("L'erreur exacte du dernier plantage. Envoie-la pour qu'elle soit corrigée.")
+                            Text(
+                                crash.lines().take(12).joinToString("\n"),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            )
+                            Button(onClick = { shareCrash(crash) }, modifier = Modifier.fillMaxWidth()) {
+                                Text("Partager l'erreur")
+                            }
+                            OutlinedButton(onClick = { CrashLog.clear(c); recreate() }, modifier = Modifier.fillMaxWidth()) {
+                                Text("Effacer")
+                            }
+                        }
+                    }
+                }
                 item {
                     Section("Android Auto et autorisations") {
                         Hint(
@@ -312,6 +330,15 @@ class SettingsActivity : ComponentActivity() {
             Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f).padding(end = 12.dp))
             Switch(checked = checked, onCheckedChange = onChange)
         }
+    }
+
+    private fun shareCrash(text: String) {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Scénic Trajets : plantage")
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        runCatching { startActivity(Intent.createChooser(send, "Partager l'erreur")) }
     }
 
     @Composable

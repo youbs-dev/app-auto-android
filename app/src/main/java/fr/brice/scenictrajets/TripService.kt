@@ -93,6 +93,7 @@ class TripService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        CrashLog.install(this)
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Trajets", NotificationManager.IMPORTANCE_LOW)

@@ -57,6 +57,7 @@ class DiagnosticScreen(carContext: CarContext, private val home: HomeScreen) : S
             .addItem(row("Vitesse (voiture)", car.vitesse))
             .addItem(permRow.build())
             .addItem(row("Version de l'app", version))
+            .addItem(row("Dernier plantage", CrashLog.summary(carContext) ?: "aucun"))
             .build()
 
         return ListTemplate.Builder()
