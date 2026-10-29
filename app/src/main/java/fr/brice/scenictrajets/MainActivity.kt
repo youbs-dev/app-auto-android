@@ -11,7 +11,11 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -81,6 +85,9 @@ class MainActivity : ComponentActivity() {
     private var statusTick by mutableIntStateOf(0)
     /** Résultat d'un envoi manuel vers Dawarich, affiché en entier dans une fenêtre. */
     private var pushResult by mutableStateOf<PushResult?>(null)
+    /** Véhicule affiché (null = tous). */
+    private var vehicleFilter by mutableStateOf<String?>(null)
+    private val vehicleListener: () -> Unit = { runOnUiThread { statusTick++ } }
 
     private class PushResult(val trip: Trip, val ok: Boolean, val message: String, val suggestedUrl: String? = null)
     private val tripListener: () -> Unit = { runOnUiThread { tripTick++ } }
@@ -99,6 +106,7 @@ class MainActivity : ComponentActivity() {
         tripTick++
         TripRecorder.addListener(tripListener)
         ChargeLog.addListener(chargeListener)
+        VehicleStore.addListener(vehicleListener)
         SyncWorker.schedule(this)
         TripPlaces.resolveMissingSoon(this)
         TripWeather.resolveMissingSoon(this)
@@ -109,6 +117,7 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         TripRecorder.removeListener(tripListener)
         ChargeLog.removeListener(chargeListener)
+        VehicleStore.removeListener(vehicleListener)
         super.onPause()
     }
 
@@ -130,7 +139,10 @@ class MainActivity : ComponentActivity() {
 
         // On ne relit l'historique que quand un trajet commence ou finit (pas à chaque position GPS).
         val active = tripTick.let { TripRecorder.isActive }
-        val trips = remember(active, statusTick) { TripRecorder.trips(this) }
+        val allTrips = remember(active, statusTick) { TripRecorder.trips(this) }
+        val vehicles = remember(statusTick) { VehicleStore.vehicles }
+        val filter = vehicleFilter?.takeIf { id -> vehicles.any { it.id == id } }
+        val trips = remember(allTrips, filter) { allTrips.filter { filter == null || it.vehicleId == filter } }
         val status = remember(statusTick) { computeStatus() }
         val configured = remember(statusTick) { SyncSettings.isConfigured(this) }
 
@@ -179,7 +191,28 @@ class MainActivity : ComponentActivity() {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item { StatusCard(status) }
+                vehicles.firstOrNull { it.toConfigure }?.let { v ->
+                    item {
+                        StatusCard(
+                            Status(
+                                false, "Nouveau véhicule : ${v.name}",
+                                "Android Auto a reconnu une nouvelle voiture. Donne-lui un nom et indique la capacité de sa batterie, pour que la conso et les coûts soient justes.",
+                                "Régler ce véhicule", { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) },
+                            )
+                        )
+                    }
+                }
                 if (active) item { CurrentTripCard(tripTick) }
+                if (vehicles.size > 1) {
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                            FilterChip(selected = filter == null, onClick = { vehicleFilter = null }, label = { Text("Tous") })
+                            vehicles.forEach { v ->
+                                FilterChip(selected = filter == v.id, onClick = { vehicleFilter = v.id }, label = { Text(v.name) })
+                            }
+                        }
+                    }
+                }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         StatCard("Cette semaine", trips, TripStats.startOfWeek(), Modifier.weight(1f))
@@ -201,7 +234,7 @@ class MainActivity : ComponentActivity() {
                 val shown = trips.take(MAX_TRIPS_SHOWN)
                 shown.groupBy { TripStats.dayLabel(it.start) }.forEach { (day, dayTrips) ->
                     item(key = "jour-$day") { SectionTitle(day) }
-                    items(dayTrips, key = { it.id }) { t -> TripCard(t, configured) { selected = t } }
+                    items(dayTrips, key = { it.id }) { t -> TripCard(t, configured, vehicles.size > 1) { selected = t } }
                 }
                 if (trips.size > MAX_TRIPS_SHOWN) {
                     item {
@@ -227,6 +260,7 @@ class MainActivity : ComponentActivity() {
                             Text("Départ : " + p.start)
                             Text("Arrivée : " + p.end)
                         }
+                        if (vehicles.size > 1) VehiclePicker(t) { selected = null }
                         Text(TripStats.summaryWithWeather(this@MainActivity, t))
                         Text(TripStats.batteryAndCost(this@MainActivity, t))
                         Spacer(Modifier.height(8.dp))
@@ -397,7 +431,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun TripCard(t: Trip, configured: Boolean, onClick: () -> Unit) {
+    private fun TripCard(t: Trip, configured: Boolean, showVehicle: Boolean, onClick: () -> Unit) {
         val cloud = when {
             !configured -> null
             TripRecorder.isSent(this, t.id) -> "☁️ envoyé"
@@ -410,7 +444,10 @@ class MainActivity : ComponentActivity() {
         ) {
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Row {
-                    Text(TripStats.hours(t), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    Text(
+                        TripStats.hours(t) + if (showVehicle) " · " + t.vehicle.name else "",
+                        style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f),
+                    )
                     cloud?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
                 TripPlaces.label(this@MainActivity, t.id)?.let {
@@ -503,6 +540,27 @@ class MainActivity : ComponentActivity() {
                 tripTick++
             }
         }.start()
+    }
+
+    /** « Véhicule : Scénic ▾ » : pour corriger le véhicule d'un trajet. */
+    @Composable
+    private fun VehiclePicker(t: Trip, done: () -> Unit) {
+        var open by remember { mutableStateOf(false) }
+        Box {
+            TextButton(onClick = { open = true }) { Text("Véhicule : ${t.vehicle.name} ▾") }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                VehicleStore.vehicles.forEach { v ->
+                    DropdownMenuItem(text = { Text(v.name) }, onClick = {
+                        open = false
+                        if (v.id != t.vehicleId) {
+                            TripRecorder.setVehicle(this@MainActivity, t.id, v.id)
+                            statusTick++
+                            done()
+                        }
+                    })
+                }
+            }
+        }
     }
 
     @Composable

@@ -165,7 +165,9 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
     private fun todayRow(): Row {
         val key = TripRecorder.isActive to TripRecorder.startTime
         val text = todayCache?.takeIf { it.first == key }?.second ?: run {
+            val several = VehicleStore.vehicles.size > 1
             val trips = runCatching { TripRecorder.trips(carContext) }.getOrDefault(emptyList())
+                .filter { !several || it.vehicleId == VehicleStore.currentId }
             val today = trips.filter { it.start >= TripStats.startOfDay(System.currentTimeMillis()) }
             val cost = today.mapNotNull { PriceSettings.tripCost(carContext, it) }.sum()
             (TripStats.total(trips, TripStats.startOfDay(System.currentTimeMillis())) +

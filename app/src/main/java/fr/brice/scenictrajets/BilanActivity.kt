@@ -3,7 +3,10 @@ package fr.brice.scenictrajets
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -73,10 +76,12 @@ class BilanActivity : ComponentActivity() {
         val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
         var tab by remember { mutableIntStateOf(0) }
         var editing by remember { mutableStateOf<Charge?>(null) }
-        val charges = remember(tick) { ChargeLog.charges(this) }
-        val trips = remember(tick) { TripRecorder.trips(this) }
-        val months = remember(tick) { TripStats.months(this, trips, charges) }
-        val bands = remember(tick) { TripWeather.bands(this, trips) }
+        var filter by remember { mutableStateOf<String?>(null) }
+        val vehicles = VehicleStore.vehicles
+        val charges = remember(tick, filter) { ChargeLog.charges(this).filter { filter == null || it.vehicleId == filter } }
+        val trips = remember(tick, filter) { TripRecorder.trips(this).filter { filter == null || it.vehicleId == filter } }
+        val months = remember(trips, charges) { TripStats.months(this, trips, charges) }
+        val bands = remember(trips) { TripWeather.bands(this, trips) }
 
         Scaffold(
             modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
@@ -109,6 +114,16 @@ class BilanActivity : ComponentActivity() {
                                 onClick = { tab = i },
                                 shape = SegmentedButtonDefaults.itemShape(i, 2),
                             ) { Text(label) }
+                        }
+                    }
+                }
+                if (vehicles.size > 1) {
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                            FilterChip(selected = filter == null, onClick = { filter = null }, label = { Text("Tous") })
+                            vehicles.forEach { v ->
+                                FilterChip(selected = filter == v.id, onClick = { filter = v.id }, label = { Text(v.name) })
+                            }
                         }
                     }
                 }

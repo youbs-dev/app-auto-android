@@ -185,6 +185,31 @@ class SettingsActivity : ComponentActivity() {
                     }
                 }
                 item {
+                    Section("Véhicules") {
+                        var editing by remember { mutableStateOf<Vehicle?>(null) }
+                        var list by remember { mutableStateOf(VehicleStore.vehicles) }
+                        list.forEach { v ->
+                            OutlinedButton(onClick = { editing = v }, modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    v.name + String.format(java.util.Locale.FRANCE, " · %.0f kWh", v.batteryKwh) +
+                                        (if (v.id == VehicleStore.currentId) " · connecté en dernier" else "") +
+                                        (if (v.toConfigure) " · à régler" else "")
+                                )
+                            }
+                        }
+                        OutlinedButton(onClick = { editing = VehicleStore.newVehicle(c) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Ajouter un véhicule")
+                        }
+                        Hint(
+                            "Chaque voiture est reconnue toute seule quand Android Auto se connecte, et ses trajets, recharges " +
+                                "et bilans sont rangés à part. Une nouvelle voiture est ajoutée automatiquement : il suffit de la régler ici."
+                        )
+                        editing?.let { v ->
+                            VehicleDialog(v, close = { editing = null; list = VehicleStore.vehicles })
+                        }
+                    }
+                }
+                item {
                     Section("Alerte batterie basse") {
                         var open by remember { mutableStateOf(false) }
                         var threshold by remember { mutableStateOf(AlertSettings.threshold(c)) }
@@ -331,6 +356,47 @@ class SettingsActivity : ComponentActivity() {
             Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f).padding(end = 12.dp))
             Switch(checked = checked, onCheckedChange = onChange)
         }
+    }
+
+    @Composable
+    private fun VehicleDialog(v: Vehicle, close: () -> Unit) {
+        var name by remember { mutableStateOf(v.name) }
+        var kwh by remember { mutableStateOf(num(v.batteryKwh)) }
+        var message by remember { mutableStateOf<String?>(null) }
+        val c = this
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = close,
+            title = { Text("Véhicule") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = name, onValueChange = { name = it },
+                        label = { Text("Nom") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    )
+                    NumberField("Capacité utile de la batterie (kWh)", kwh, "87") { kwh = it }
+                    if (v.model.isNotEmpty()) Hint("Reconnu dans Android Auto comme « ${v.model} ».")
+                    message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    if (VehicleStore.vehicles.any { it.id == v.id } && VehicleStore.vehicles.size > 1) {
+                        androidx.compose.material3.TextButton(onClick = {
+                            if (VehicleStore.delete(c, v.id)) close()
+                            else message = "Ce véhicule a des trajets : change d'abord leur véhicule, ou garde-le."
+                        }) { Text("Supprimer ce véhicule") }
+                    }
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    val k = parsePrice(kwh)
+                    if (name.isBlank() || k == null || k < 5f) {
+                        message = "Indique un nom et une capacité (par exemple 52 ou 87)."
+                    } else {
+                        VehicleStore.upsert(c, v.copy(name = name.trim().replace(";", ","), batteryKwh = k, toConfigure = false))
+                        close()
+                    }
+                }) { Text("Enregistrer") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = close) { Text("Annuler") } },
+        )
     }
 
     private fun shareCrash(text: String) {
