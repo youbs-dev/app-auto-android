@@ -56,9 +56,20 @@ object SyncSettings {
 }
 
 /** Le serveur renvoie vers une autre adresse. [suggestedUrl] est l'adresse de base à mettre dans les réglages. */
-class RedirectException(val location: String, val suggestedUrl: String?, code: Int) : Exception(
-    "le serveur renvoie vers $location ($code)"
-)
+class RedirectException(val location: String, suggested: String?, code: Int) : Exception(
+    if (isUmbrelLogin(location)) UMBREL_MESSAGE else "le serveur renvoie vers $location ($code)"
+) {
+    /** Sur Umbrel, la redirection mène à la page de connexion : changer d'adresse ne servirait à rien. */
+    val umbrel = isUmbrelLogin(location)
+    val suggestedUrl: String? = if (umbrel) null else suggested
+
+    companion object {
+        fun isUmbrelLogin(location: String) = location.contains("/app-auth")
+        const val UMBREL_MESSAGE =
+            "Umbrel demande de se connecter avant d'ouvrir Dawarich, et bloque donc l'app. " +
+                "Il faut autoriser /api/* sans connexion Umbrel (PROXY_AUTH_WHITELIST dans l'app Dawarich d'Umbrel)."
+    }
+}
 
 /** Trajet sans point à envoyer : ce n'est pas une panne, la tâche automatique passe au suivant. */
 class NothingToSend(message: String) : Exception(message)

@@ -486,7 +486,7 @@ class MainActivity : ComponentActivity() {
                 if (!TripRecorder.isSent(this, t.id)) TripRecorder.markSent(this, t.id)
                 PushResult(t, true, "$count points envoyés à Dawarich.")
             } catch (e: RedirectException) {
-                PushResult(
+                if (e.umbrel) PushResult(t, false, RedirectException.UMBREL_MESSAGE + "\n\nRedirection vers :\n${e.location}") else PushResult(
                     t, false,
                     "Le serveur ne répond pas à l'adresse des réglages :\n${SyncSettings.url(this)}\n\n" +
                         "Il renvoie vers :\n${e.location}",
