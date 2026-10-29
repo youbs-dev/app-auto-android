@@ -40,13 +40,16 @@ class CarData(private val carContext: CarContext, private val onChange: () -> Un
     var kilometrage = "en attente…"; private set
 
     private var listening = false
+    /** Le modèle de la voiture est connu : on sait à quel véhicule rattacher les données. */
+    private var vehicleKnown = false
 
     private val energyListener = OnCarDataAvailableListener<EnergyLevel> { e ->
         CarSnapshot.batteryPercent = ok(e.batteryPercent)
         CarSnapshot.rangeKm = ok(e.rangeRemainingMeters)?.div(1000f)
         TripRecorder.onCarData()
         CarSnapshot.batteryPercent?.let { pct ->
-            runCatching { ChargeLog.onBattery(carContext, pct) }
+            // Les recharges ne sont comptées qu'une fois la voiture reconnue (sinon : mauvais véhicule).
+            if (vehicleKnown) runCatching { ChargeLog.onBattery(carContext, pct) }
             runCatching { BatteryAlert.onBattery(carContext, pct) }
         }
         batterie = format(e.batteryPercent) { String.format(Locale.FRANCE, "%.1f %%", it) }
@@ -71,12 +74,17 @@ class CarData(private val carContext: CarContext, private val onChange: () -> Un
     fun start() {
         if (listening) return
         listening = true
+        VehicleStore.init(carContext)
+        // Un seul véhicule : pas besoin d'attendre le modèle pour savoir à qui sont les données.
+        if (VehicleStore.vehicles.size <= 1) vehicleKnown = true
         safely("modèle") {
             carInfo.fetchModel(executor) { m: Model ->
                 val nom = listOfNotNull(m.manufacturer.value, m.name.value, m.year.value?.toString())
                     .joinToString(" ")
                 vehicule = nom.ifBlank { statusText(m.name.status) }
-                fetchEnergyProfile()
+                runCatching { VehicleStore.onCarModel(carContext, nom, null) }
+                vehicleKnown = true
+                fetchEnergyProfile(nom)
             }
         }
         safely("batterie") { carInfo.addEnergyLevelListener(executor, energyListener) }
@@ -97,9 +105,12 @@ class CarData(private val carContext: CarContext, private val onChange: () -> Un
         ContextCompat.checkSelfPermission(carContext, it) != PackageManager.PERMISSION_GRANTED
     }
 
-    private fun fetchEnergyProfile() {
+    private fun fetchEnergyProfile(model: String) {
         safely("profil énergie") {
             carInfo.fetchEnergyProfile(executor) { p: EnergyProfile ->
+                p.fuelTypes.value?.let { types ->
+                    runCatching { VehicleStore.onCarModel(carContext, model, types.contains(EnergyProfile.FUEL_TYPE_ELECTRIC)) }
+                }
                 val types = p.fuelTypes.value
                     ?.joinToString { if (it == EnergyProfile.FUEL_TYPE_ELECTRIC) "électrique" else "type $it" }
                 vehicule += " · " + (types ?: statusText(p.fuelTypes.status))

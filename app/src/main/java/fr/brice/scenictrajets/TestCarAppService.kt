@@ -16,6 +16,7 @@ class TestCarAppService : CarAppService() {
     override fun onCreate() {
         super.onCreate()
         CrashLog.install(this)
+        VehicleStore.init(this)
     }
 
     override fun onCreateSession(): Session = object : Session() {

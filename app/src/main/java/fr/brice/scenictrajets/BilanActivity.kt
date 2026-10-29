@@ -52,6 +52,7 @@ class BilanActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        VehicleStore.init(this)
         setContent { ScenicTheme { Content() } }
     }
 

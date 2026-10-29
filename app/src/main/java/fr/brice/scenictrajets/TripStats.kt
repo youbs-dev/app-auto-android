@@ -8,8 +8,6 @@ import java.util.Locale
 /** Calculs et textes communs à l'écran de la voiture et à celui du téléphone. */
 object TripStats {
 
-    /** Capacité utile de la batterie du Scénic E-Tech (87 kWh). */
-    const val BATTERY_KWH = 87f
 
     private val hour = SimpleDateFormat("HH:mm", Locale.FRANCE)
     private val day = SimpleDateFormat("EEEE d MMMM", Locale.FRANCE)
@@ -22,7 +20,8 @@ object TripStats {
         return s - e
     }
 
-    fun kwh(t: Trip): Float? = batteryUsed(t)?.takeIf { it > 0 }?.let { it / 100f * BATTERY_KWH }
+    /** kWh utilisés, selon la capacité de la batterie du véhicule du trajet. */
+    fun kwh(t: Trip): Float? = batteryUsed(t)?.takeIf { it > 0 }?.let { it / 100f * t.vehicle.batteryKwh }
 
     /** Consommation estimée, seulement quand le trajet est assez long pour que le chiffre ait un sens. */
     fun kwhPer100(t: Trip): Float? {
@@ -121,7 +120,7 @@ object TripStats {
         val dist = TripRecorder.distanceKm
         val start = TripRecorder.batteryAtStart
         val now = CarSnapshot.batteryPercent
-        val kwh = start?.let { s -> now?.let { n -> (s - n).takeIf { it > 0 }?.let { it / 100f * BATTERY_KWH } } }
+        val kwh = start?.let { s -> now?.let { n -> (s - n).takeIf { it > 0 }?.let { it / 100f * VehicleStore.current.batteryKwh } } }
         return Live(
             distanceKm = dist,
             durationMin = ms / 60_000,

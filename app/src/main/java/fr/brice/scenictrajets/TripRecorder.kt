@@ -30,7 +30,10 @@ data class Trip(
     val rangeEnd: Float?,
     val odometerStart: Float?,
     val odometerEnd: Float?,
+    /** Véhicule du trajet (voir [VehicleStore]). */
+    val vehicleId: String = VehicleStore.DEFAULT_ID,
 ) {
+    val vehicle: Vehicle get() = VehicleStore.get(vehicleId)
     val durationMin: Long get() = (end - start) / 60_000
 }
 
@@ -42,7 +45,7 @@ object TripRecorder {
 
     private const val SUMMARY_HEADER =
         "id;debut;fin;duree_min;distance_km;batterie_debut_pct;batterie_fin_pct;" +
-            "autonomie_debut_km;autonomie_fin_km;compteur_debut_km;compteur_fin_km"
+            "autonomie_debut_km;autonomie_fin_km;compteur_debut_km;compteur_fin_km;vehicule"
     private const val POINTS_HEADER =
         "heure;latitude;longitude;vitesse_kmh;precision_m;batterie_pct;autonomie_km;altitude_m"
 
@@ -152,6 +155,8 @@ object TripRecorder {
             tripId, startTime, System.currentTimeMillis(), distanceKm,
             batteryStart, CarSnapshot.batteryPercent, rangeStart, CarSnapshot.rangeKm,
             odometerStart, CarSnapshot.odometerKm,
+            // Le véhicule est connu dès qu'Android Auto a donné le modèle de la voiture.
+            VehicleStore.currentId,
         )
         summary.appendText(toCsv(trip) + "\n")
         runCatching { writeGpx(context, tripId) }
@@ -262,6 +267,7 @@ object TripRecorder {
                     c[0], parseTime(c[1])!!.time, parseTime(c[2])!!.time,
                     c[4].toDouble(), c[5].toFloatOrNull(), c[6].toFloatOrNull(),
                     c[7].toFloatOrNull(), c[8].toFloatOrNull(), c[9].toFloatOrNull(), c[10].toFloatOrNull(),
+                    c.getOrNull(11)?.ifBlank { null } ?: VehicleStore.DEFAULT_ID,
                 )
             }.getOrNull()
         }.reversed()
@@ -270,8 +276,32 @@ object TripRecorder {
     private fun toCsv(t: Trip) = listOf(
         t.id, dateFormat.format(Date(t.start)), dateFormat.format(Date(t.end)), t.durationMin.toString(),
         "%.2f".format(Locale.US, t.distanceKm), fmt(t.batteryStart), fmt(t.batteryEnd),
-        fmt(t.rangeStart), fmt(t.rangeEnd), fmt(t.odometerStart), fmt(t.odometerEnd),
+        fmt(t.rangeStart), fmt(t.rangeEnd), fmt(t.odometerStart), fmt(t.odometerEnd), t.vehicleId,
     ).joinToString(";")
+
+    /** Ajoute la colonne « vehicule » aux anciens historiques : les trajets d'avant sont ceux du Scénic. */
+    @Synchronized
+    fun migrateVehicleColumn(context: Context) {
+        val f = summaryFile(context)
+        if (!f.exists()) return
+        val lines = f.readLines()
+        if (lines.isEmpty() || lines[0].endsWith(";vehicule")) return
+        val out = StringBuilder(SUMMARY_HEADER).append('\n')
+        lines.drop(1).filter { it.isNotBlank() }.forEach { l ->
+            out.append(if (l.split(";").size == 11) l + ";" + VehicleStore.DEFAULT_ID else l).append('\n')
+        }
+        f.writeText(out.toString())
+    }
+
+    /** Change le véhicule d'un trajet (correction à la main depuis le téléphone). */
+    @Synchronized
+    fun setVehicle(context: Context, id: String, vehicleId: String) {
+        val f = summaryFile(context)
+        if (!f.exists()) return
+        val updated = trips(context).reversed().map { if (it.id == id) it.copy(vehicleId = vehicleId) else it }
+        f.writeText(SUMMARY_HEADER + "\n" + updated.joinToString("") { toCsv(it) + "\n" })
+        notifyListeners()
+    }
 
     private fun fmt(v: Float?) = v?.let { "%.1f".format(Locale.US, it) } ?: ""
 }

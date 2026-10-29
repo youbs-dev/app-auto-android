@@ -74,6 +74,7 @@ class SettingsActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        VehicleStore.init(this)
         url = SyncSettings.url(this)
         key = SyncSettings.apiKey(this)
         autoUpload = SyncSettings.autoUpload(this)

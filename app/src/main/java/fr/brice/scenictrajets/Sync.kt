@@ -95,8 +95,11 @@ object Dawarich {
         if (!file.exists()) throw NothingToSend("les points de ce trajet ne sont plus sur le téléphone")
         val batch = JSONArray()
         var sent = 0
+        // Un appareil par véhicule dans Dawarich (le Scénic garde « scenic », comme avant).
+        VehicleStore.init(context)
+        val device = TripRecorder.trips(context).firstOrNull { it.id == id }?.vehicle?.deviceId ?: VehicleStore.DEFAULT_ID
         file.readLines().drop(1).forEach { line ->
-            toFeature(line)?.let { batch.put(it) }
+            toFeature(line, device)?.let { batch.put(it) }
             if (batch.length() >= 500) {
                 post(context, batch)
                 sent += batch.length()
@@ -111,7 +114,7 @@ object Dawarich {
         return sent
     }
 
-    private fun toFeature(line: String): JSONObject? {
+    private fun toFeature(line: String, device: String): JSONObject? {
         val c = line.split(";")
         if (c.size < 5) return null
         val time = runCatching { TripRecorder.parseTime(c[0]) }.getOrNull() ?: return null
@@ -119,7 +122,7 @@ object Dawarich {
         val lon = c[2].toDoubleOrNull() ?: return null
         val props = JSONObject()
             .put("timestamp", iso.format(time))
-            .put("device_id", "scenic")
+            .put("device_id", device)
         c[3].toDoubleOrNull()?.let { props.put("speed", it / 3.6) }
         c[4].toDoubleOrNull()?.let { props.put("horizontal_accuracy", it) }
         c.getOrNull(7)?.toDoubleOrNull()?.let { props.put("altitude", it) }

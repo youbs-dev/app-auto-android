@@ -75,9 +75,11 @@ data class Charge(
     val place: String,
     val lat: Double?,
     val lon: Double?,
+    val vehicleId: String = VehicleStore.DEFAULT_ID,
 ) {
-    /** kWh entrés dans la batterie. */
-    val kwhAdded: Float get() = ((pctTo - pctFrom) / 100f * TripStats.BATTERY_KWH).coerceAtLeast(0f)
+    /** kWh entrés dans la batterie (selon la capacité de la batterie du véhicule). */
+    val kwhAdded: Float get() =
+        ((pctTo - pctFrom) / 100f * VehicleStore.get(vehicleId).batteryKwh).coerceAtLeast(0f)
     /** kWh payés (pertes de recharge comprises). */
     val kwhPaid: Float get() = kwhAdded / PriceSettings.CHARGE_EFFICIENCY
     val cost: Float get() = kwhPaid * pricePerKwh
@@ -89,7 +91,7 @@ data class Charge(
  */
 object ChargeLog {
     private const val PREFS = "recharges"
-    private const val HEADER = "id;debut;fin;batterie_debut_pct;batterie_fin_pct;kwh_batterie;prix_kwh;cout_eur;lieu;latitude;longitude"
+    private const val HEADER = "id;debut;fin;batterie_debut_pct;batterie_fin_pct;kwh_batterie;prix_kwh;cout_eur;lieu;latitude;longitude;vehicule"
     /** Hausse minimale pour compter une nouvelle recharge (évite les petites variations de lecture). */
     private const val MIN_RISE = 1.5f
     /** Une hausse qui suit une recharge dans ce délai la prolonge (recharge suivie en direct). */
@@ -112,32 +114,37 @@ object ChargeLog {
     fun onBattery(c: Context, pct: Float) {
         val p = prefs(c)
         val now = System.currentTimeMillis()
-        if (!p.contains("pct")) {
-            p.edit().putFloat("pct", pct).putLong("heure", now).apply()
+        // Une référence par véhicule : changer de voiture ne doit pas ressembler à une recharge.
+        val vid = VehicleStore.currentId
+        val kPct = if (vid == VehicleStore.DEFAULT_ID) "pct" else "pct_$vid"
+        val kTime = if (vid == VehicleStore.DEFAULT_ID) "heure" else "heure_$vid"
+        if (!p.contains(kPct)) {
+            p.edit().putFloat(kPct, pct).putLong(kTime, now).apply()
             return
         }
-        val base = p.getFloat("pct", pct)
-        val baseTime = p.getLong("heure", now)
+        val base = p.getFloat(kPct, pct)
+        val baseTime = p.getLong(kTime, now)
         // En roulant, le % peut remonter un peu (freinage régénératif) : ce n'est pas une recharge.
         // Si la lecture précédente est ancienne (session précédente), la hausse vient d'une recharge.
         val moving = TripRecorder.isActive && now - TripRecorder.lastMovingAt < 2 * 60_000L &&
             now - baseTime < 15 * 60_000L
         if (moving || pct <= base) {
-            p.edit().putFloat("pct", pct).putLong("heure", now).apply()
+            p.edit().putFloat(kPct, pct).putLong(kTime, now).apply()
             return
         }
         val list = charges(c).toMutableList()
-        val last = list.firstOrNull()
+        val lastIndex = list.indexOfFirst { it.vehicleId == vid }
+        val last = list.getOrNull(lastIndex)
         if (last != null && now - last.end < MERGE_MS && kotlin.math.abs(last.pctTo - base) < 0.05f) {
             // La recharge continue : on la prolonge.
-            list[0] = last.copy(end = now, pctTo = pct)
+            list[lastIndex] = last.copy(end = now, pctTo = pct)
         } else if (pct - base >= MIN_RISE) {
-            list.add(0, newCharge(c, list, baseTime, now, base, pct))
+            list.add(0, newCharge(c, list, baseTime, now, base, pct).copy(vehicleId = vid))
         } else {
             // Petite hausse : on garde la référence, la suite dira si c'est une recharge.
             return
         }
-        p.edit().putFloat("pct", pct).putLong("heure", now).apply()
+        p.edit().putFloat(kPct, pct).putLong(kTime, now).apply()
         write(c, list)
         notifyListeners()
     }
@@ -185,6 +192,7 @@ object ChargeLog {
                     x[0], TripRecorder.parseTime(x[1])!!.time, TripRecorder.parseTime(x[2])!!.time,
                     x[3].toFloat(), x[4].toFloat(), x[6].toFloat(), x[8],
                     x[9].toDoubleOrNull(), x[10].toDoubleOrNull(),
+                    x.getOrNull(11)?.ifBlank { null } ?: VehicleStore.DEFAULT_ID,
                 )
             }.getOrNull()
         }.reversed()
@@ -202,6 +210,7 @@ object ChargeLog {
                     "%.2f".format(Locale.US, ch.cost), ch.place,
                     ch.lat?.let { "%.6f".format(Locale.US, it) } ?: "",
                     ch.lon?.let { "%.6f".format(Locale.US, it) } ?: "",
+                    ch.vehicleId,
                 ).joinToString(";")
             ).append('\n')
         }

@@ -66,6 +66,7 @@ class TripMapActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        VehicleStore.init(this)
         // OpenStreetMap demande une application identifiée ; les tuiles sont gardées dans le cache de l'app.
         Configuration.getInstance().apply {
             userAgentValue = packageName
