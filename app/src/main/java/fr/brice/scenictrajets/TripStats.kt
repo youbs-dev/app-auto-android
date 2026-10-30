@@ -176,11 +176,41 @@ object TripStats {
     private val monthName = SimpleDateFormat("MMMM yyyy", Locale.FRANCE)
 
     /** Un bilan par mois, du plus récent au plus ancien. */
-    fun months(c: android.content.Context, trips: List<Trip>, charges: List<Charge>): List<Month> {
+    fun months(c: android.content.Context, trips: List<Trip>, charges: List<Charge>): List<Month> =
+        periods(c, trips, charges, { monthKey.format(Date(it)) }) { first ->
+            monthName.format(Date(first)).replaceFirstChar { it.uppercase() }
+        }
+
+    private val weekDay = SimpleDateFormat("EEE d MMM", Locale.FRANCE)
+
+    /** Lundi 0 h de la semaine qui contient [time]. */
+    fun weekStart(time: Long): Long = Calendar.getInstance(Locale.FRANCE).apply {
+        timeInMillis = startOfDay(time)
+        firstDayOfWeek = Calendar.MONDAY
+        set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+        if (timeInMillis > time) add(Calendar.DAY_OF_YEAR, -7)
+    }.timeInMillis
+
+    /** Un bilan par semaine (lundi → dimanche), de la plus récente à la plus ancienne. */
+    fun weeks(c: android.content.Context, trips: List<Trip>, charges: List<Charge>): List<Month> =
+        periods(c, trips, charges, { "%015d".format(weekStart(it)) }) { first ->
+            val start = weekStart(first)
+            if (start == weekStart(System.currentTimeMillis())) {
+                "Cette semaine (depuis " + weekDay.format(Date(start)) + ")"
+            } else {
+                val end = start + 6 * 24 * 3600_000L
+                "Du " + weekDay.format(Date(start)) + " au " + weekDay.format(Date(end))
+            }
+        }
+
+    private fun periods(
+        c: android.content.Context, trips: List<Trip>, charges: List<Charge>,
+        keyOf: (Long) -> String, labelOf: (Long) -> String,
+    ): List<Month> {
         val price = PriceSettings.pricePerBatteryKwh(c)
         val fuel = PriceSettings.fuelPrice(c) * PriceSettings.fuelPer100(c) / 100f
-        val tripsBy = trips.groupBy { monthKey.format(Date(it.start)) }
-        val chargesBy = charges.groupBy { monthKey.format(Date(it.end)) }
+        val tripsBy = trips.groupBy { keyOf(it.start) }
+        val chargesBy = charges.groupBy { keyOf(it.end) }
         return (tripsBy.keys + chargesBy.keys).sortedDescending().map { key ->
             val ts = tripsBy[key].orEmpty()
             val cs = chargesBy[key].orEmpty()
@@ -189,7 +219,7 @@ object TripStats {
             val measuredKm = measured.sumOf { it.distanceKm }
             val first = ts.firstOrNull()?.start ?: cs.first().end
             Month(
-                label = monthName.format(Date(first)).replaceFirstChar { it.uppercase() },
+                label = labelOf(first),
                 trips = ts.size,
                 km = ts.sumOf { it.distanceKm },
                 measuredKm = measuredKm,

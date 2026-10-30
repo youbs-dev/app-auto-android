@@ -50,6 +50,11 @@ import java.util.Locale
 /** Bilan de chaque mois (km, énergie, coût, comparaison essence) et journal des recharges. */
 class BilanActivity : ComponentActivity() {
 
+    companion object {
+        /** true : ouvrir le bilan par semaine (depuis la carte « Cette semaine »). */
+        const val EXTRA_WEEKLY = "semaine"
+    }
+
     private var tick by mutableIntStateOf(0)
     private val listener: () -> Unit = { runOnUiThread { tick++ } }
 
@@ -76,19 +81,23 @@ class BilanActivity : ComponentActivity() {
     private fun Content() {
         val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
         var tab by remember { mutableIntStateOf(0) }
+        // Ouvert depuis la carte « Cette semaine » : bilan par semaine.
+        var weekly by remember { mutableStateOf(intent.getBooleanExtra(EXTRA_WEEKLY, false)) }
         var editing by remember { mutableStateOf<Charge?>(null) }
         var filter by remember { mutableStateOf<String?>(null) }
         val vehicles = VehicleStore.vehicles
         val charges = remember(tick, filter) { ChargeLog.charges(this).filter { filter == null || it.vehicleId == filter } }
         val trips = remember(tick, filter) { TripRecorder.trips(this).filter { filter == null || it.vehicleId == filter } }
-        val months = remember(trips, charges) { TripStats.months(this, trips, charges) }
+        val months = remember(trips, charges, weekly) {
+            if (weekly) TripStats.weeks(this, trips, charges) else TripStats.months(this, trips, charges)
+        }
         val bands = remember(trips) { TripWeather.bands(this, trips) }
 
         Scaffold(
             modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
             topBar = {
                 LargeTopAppBar(
-                    title = { Text(if (tab == 0) "Bilan du mois" else "Recharges") },
+                    title = { Text(if (tab == 1) "Recharges" else if (weekly) "Bilan de la semaine" else "Bilan du mois") },
                     scrollBehavior = scroll,
                     navigationIcon = {
                         IconButton(onClick = { finish() }) {
@@ -129,6 +138,17 @@ class BilanActivity : ComponentActivity() {
                     }
                 }
                 if (tab == 0) {
+                    item {
+                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                            listOf("Par mois", "Par semaine").forEachIndexed { i, label ->
+                                SegmentedButton(
+                                    selected = weekly == (i == 1),
+                                    onClick = { weekly = i == 1 },
+                                    shape = SegmentedButtonDefaults.itemShape(i, 2),
+                                ) { Text(label, maxLines = 1, softWrap = false) }
+                            }
+                        }
+                    }
                     if (bands.isNotEmpty()) item { WeatherCard(bands) }
                     if (months.isEmpty()) item { Empty("Le bilan apparaîtra après le premier trajet.") }
                     items(months, key = { it.label }) { MonthCard(it) }

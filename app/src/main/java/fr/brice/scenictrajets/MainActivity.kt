@@ -215,8 +215,8 @@ class MainActivity : ComponentActivity() {
                 }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        StatCard("Cette semaine", trips, TripStats.startOfWeek(), Modifier.weight(1f))
-                        StatCard("Ce mois", trips, TripStats.startOfMonth(), Modifier.weight(1f))
+                        StatCard("Cette semaine", trips, TripStats.startOfWeek(), Modifier.weight(1f), weekly = true)
+                        StatCard("Ce mois", trips, TripStats.startOfMonth(), Modifier.weight(1f), weekly = false)
                     }
                 }
                 if (trips.isEmpty()) {
@@ -391,13 +391,13 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun StatCard(label: String, trips: List<Trip>, since: Long, modifier: Modifier) {
+    private fun StatCard(label: String, trips: List<Trip>, since: Long, modifier: Modifier, weekly: Boolean) {
         val list = trips.filter { it.start >= since }
         val km = list.sumOf { it.distanceKm }
         val kwh = list.mapNotNull { TripStats.kwh(it) }.sum()
         val cost = list.mapNotNull { PriceSettings.tripCost(this, it) }.sum()
         Card(
-            onClick = { openBilan() },
+            onClick = { openBilan(weekly) },
             modifier = modifier,
             shape = MaterialTheme.shapes.extraLarge,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
@@ -501,7 +501,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun openBilan() = startActivity(Intent(this, BilanActivity::class.java))
+    private fun openBilan(weekly: Boolean = false) =
+        startActivity(Intent(this, BilanActivity::class.java).putExtra(BilanActivity.EXTRA_WEEKLY, weekly))
 
     private fun openAppSettings() {
         runCatching {
