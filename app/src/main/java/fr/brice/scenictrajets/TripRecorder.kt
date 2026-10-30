@@ -165,6 +165,7 @@ object TripRecorder {
         LocalBackup.save(context, pointsFile(context, tripId))
         runCatching { SyncWorker.runSoon(context) }
         TripPlaces.resolveMissingSoon(context)
+        Routes.computeMissingSoon(context)
         TripWeather.resolveMissingSoon(context)
         notifyListeners()
     }

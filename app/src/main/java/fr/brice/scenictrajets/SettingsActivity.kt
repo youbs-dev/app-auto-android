@@ -210,6 +210,33 @@ class SettingsActivity : ComponentActivity() {
                     }
                 }
                 item {
+                    Section("Domicile et travail") {
+                        var tick by remember { mutableStateOf(0) }
+                        listOf("domicile" to "Domicile", "travail" to "Travail").forEach { (key, label) ->
+                            val pos = tick.let { if (key == "domicile") Routes.home(c) else Routes.work(c) }
+                            val manual = tick.let { Routes.isManual(c, key) }
+                            Text(
+                                "$label : " + when {
+                                    pos == null -> "pas encore trouvé"
+                                    manual -> "réglé à la main"
+                                    else -> "trouvé à partir de tes trajets"
+                                },
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = {
+                                    TripPlaces.currentPosition(c)?.let { Routes.setManual(c, key, it); tick++ }
+                                }) { Text("Ici, maintenant") }
+                                if (manual) OutlinedButton(onClick = { Routes.setManual(c, key, null); tick++ }) { Text("Automatique") }
+                            }
+                        }
+                        Hint(
+                            "L'app trouve ton domicile (là où tu arrives le soir) et ton travail (là où tu arrives le matin en semaine). " +
+                                "Les trajets entre les deux sont marqués, et chaque trajet est comparé à la moyenne des trajets sur le même parcours."
+                        )
+                    }
+                }
+                item {
                     Section("Alerte batterie basse") {
                         var open by remember { mutableStateOf(false) }
                         var threshold by remember { mutableStateOf(AlertSettings.threshold(c)) }

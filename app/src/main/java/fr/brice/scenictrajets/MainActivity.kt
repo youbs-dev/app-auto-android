@@ -109,6 +109,7 @@ class MainActivity : ComponentActivity() {
         VehicleStore.addListener(vehicleListener)
         SyncWorker.schedule(this)
         TripPlaces.resolveMissingSoon(this)
+        Routes.computeMissingSoon(this)
         TripWeather.resolveMissingSoon(this)
         // Enregistre (ou ré-enregistre) la détection de conduite dès que les autorisations le permettent.
         DrivingDetector.register(this)
@@ -234,7 +235,7 @@ class MainActivity : ComponentActivity() {
                 val shown = trips.take(MAX_TRIPS_SHOWN)
                 shown.groupBy { TripStats.dayLabel(it.start) }.forEach { (day, dayTrips) ->
                     item(key = "jour-$day") { SectionTitle(day) }
-                    items(dayTrips, key = { it.id }) { t -> TripCard(t, configured, vehicles.size > 1) { selected = t } }
+                    items(dayTrips, key = { it.id }) { t -> TripCard(t, allTrips, configured, vehicles.size > 1) { selected = t } }
                 }
                 if (trips.size > MAX_TRIPS_SHOWN) {
                     item {
@@ -261,6 +262,9 @@ class MainActivity : ComponentActivity() {
                             Text("Arrivée : " + p.end)
                         }
                         if (vehicles.size > 1) VehiclePicker(t) { selected = null }
+                        Routes.compare(this@MainActivity, t, allTrips)?.let { c ->
+                            Text("Par rapport aux ${c.similar} autres trajets sur ce parcours : " + Routes.compareLine(t, c))
+                        }
                         Text(TripStats.summaryWithWeather(this@MainActivity, t))
                         Text(TripStats.batteryAndCost(this@MainActivity, t))
                         Spacer(Modifier.height(8.dp))
@@ -431,7 +435,9 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun TripCard(t: Trip, configured: Boolean, showVehicle: Boolean, onClick: () -> Unit) {
+    private fun TripCard(t: Trip, all: List<Trip>, configured: Boolean, showVehicle: Boolean, onClick: () -> Unit) {
+        val cmp = remember(t.id, all.size) { Routes.compare(this, t, all) }
+        val kind = remember(t.id, all.size) { Routes.kind(this, t) }
         val cloud = when {
             !configured -> null
             TripRecorder.isSent(this, t.id) -> "☁️ envoyé"
@@ -450,11 +456,18 @@ class MainActivity : ComponentActivity() {
                     )
                     cloud?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
-                TripPlaces.label(this@MainActivity, t.id)?.let {
+                val place = TripPlaces.label(this@MainActivity, t.id)
+                listOfNotNull(
+                    if (kind != Routes.Kind.OTHER) (if (kind == Routes.Kind.HOME_WORK) "🏠 → 🏢 " else "🏢 → 🏠 ") + kind.label else null,
+                    place.takeIf { kind == Routes.Kind.OTHER },
+                ).firstOrNull()?.let {
                     Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
                 }
                 Text(TripStats.summaryWithWeather(this@MainActivity, t), style = MaterialTheme.typography.bodyLarge)
                 Text(TripStats.batteryAndCost(this@MainActivity, t), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                cmp?.let { c -> Routes.compareLine(t, c).takeIf { it.isNotEmpty() } }?.let {
+                    Text("⏱ $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
     }
