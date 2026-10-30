@@ -63,6 +63,7 @@ class BilanActivity : ComponentActivity() {
         super.onResume()
         tick++
         ChargeLog.addListener(listener)
+        ChargeLog.resolveNamesSoon(this)
     }
 
     override fun onPause() {
@@ -141,7 +142,8 @@ class BilanActivity : ComponentActivity() {
                     item {
                         Hint(
                             "Une recharge est notée quand la batterie a remonté entre deux lectures dans la voiture. " +
-                                "Touche une recharge pour indiquer le lieu et le prix payé (une borne publique, par exemple). " +
+                                "Sur une borne publique, l'app note toute seule le nom de la borne (base OpenStreetMap). " +
+                                "Touche une recharge pour corriger le lieu ou indiquer le prix payé. " +
                                 "Les recharges suivantes au même endroit reprennent ce lieu et ce prix."
                         )
                     }

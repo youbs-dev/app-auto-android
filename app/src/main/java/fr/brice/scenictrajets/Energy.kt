@@ -147,6 +147,39 @@ object ChargeLog {
         p.edit().putFloat(kPct, pct).putLong(kTime, now).apply()
         write(c, list)
         notifyListeners()
+        resolveNamesSoon(c)
+    }
+
+    /** Distance maximale entre la voiture et une borne pour lui donner son nom. */
+    private const val CHARGER_NAME_M = 120f
+
+    /**
+     * Donne aux recharges sans lieu le nom de la borne OpenStreetMap la plus proche (moins de 120 m).
+     * Chaque recharge n'est cherchée qu'une fois ; sans borne à proximité (à la maison), le lieu reste à préciser.
+     */
+    fun resolveNamesSoon(c: Context) {
+        val app = c.applicationContext
+        Thread {
+            runCatching { resolveNames(app) }.onFailure { android.util.Log.w("ScenicRecharges", "Nom des bornes : échec", it) }
+        }.start()
+    }
+
+    private fun resolveNames(c: Context) {
+        val p = prefs(c)
+        val done = p.getStringSet("bornes_cherchees", emptySet())!!.toMutableSet()
+        val todo = charges(c).filter { it.place.isEmpty() && it.lat != null && it.lon != null && it.id !in done }.take(5)
+        for (ch in todo) {
+            // Une erreur réseau laisse la recharge en attente : on réessaiera plus tard.
+            val near = ChargerSearch.near(ch.lat!!, ch.lon!!, radiusM = CHARGER_NAME_M.toInt(), max = 1).firstOrNull()
+            done += ch.id
+            p.edit().putStringSet("bornes_cherchees", done.toSet()).apply()
+            if (near != null && near.distanceM <= CHARGER_NAME_M) {
+                synchronized(this) {
+                    val current = charges(c).firstOrNull { it.id == ch.id } ?: return@synchronized
+                    if (current.place.isEmpty()) update(c, ch.id, near.name, current.pricePerKwh)
+                }
+            }
+        }
     }
 
     private fun newCharge(c: Context, previous: List<Charge>, start: Long, end: Long, from: Float, to: Float): Charge {
