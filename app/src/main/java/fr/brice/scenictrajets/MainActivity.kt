@@ -11,7 +11,11 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -48,6 +52,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
@@ -77,10 +83,20 @@ class MainActivity : ComponentActivity() {
     /** Change à chaque position GPS ou à chaque retour sur l'écran : Compose redessine. */
     private var tripTick by mutableIntStateOf(0)
     private var statusTick by mutableIntStateOf(0)
+    /** Résultat d'un envoi manuel vers Dawarich, affiché en entier dans une fenêtre. */
+    private var pushResult by mutableStateOf<PushResult?>(null)
+    /** Véhicule affiché (null = tous). */
+    private var vehicleFilter by mutableStateOf<String?>(null)
+    private val vehicleListener: () -> Unit = { runOnUiThread { statusTick++ } }
+
+    private class PushResult(val trip: Trip, val ok: Boolean, val message: String, val suggestedUrl: String? = null)
     private val tripListener: () -> Unit = { runOnUiThread { tripTick++ } }
+    private val chargeListener: () -> Unit = { runOnUiThread { statusTick++ } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLog.install(this)
+        VehicleStore.init(this)
         setContent { ScenicTheme { HomeContent() } }
     }
 
@@ -89,13 +105,20 @@ class MainActivity : ComponentActivity() {
         statusTick++
         tripTick++
         TripRecorder.addListener(tripListener)
+        ChargeLog.addListener(chargeListener)
+        VehicleStore.addListener(vehicleListener)
         SyncWorker.schedule(this)
+        TripPlaces.resolveMissingSoon(this)
+        Routes.computeMissingSoon(this)
+        TripWeather.resolveMissingSoon(this)
         // Enregistre (ou ré-enregistre) la détection de conduite dès que les autorisations le permettent.
         DrivingDetector.register(this)
     }
 
     override fun onPause() {
         TripRecorder.removeListener(tripListener)
+        ChargeLog.removeListener(chargeListener)
+        VehicleStore.removeListener(vehicleListener)
         super.onPause()
     }
 
@@ -117,7 +140,10 @@ class MainActivity : ComponentActivity() {
 
         // On ne relit l'historique que quand un trajet commence ou finit (pas à chaque position GPS).
         val active = tripTick.let { TripRecorder.isActive }
-        val trips = remember(active, statusTick) { TripRecorder.trips(this) }
+        val allTrips = remember(active, statusTick) { TripRecorder.trips(this) }
+        val vehicles = remember(statusTick) { VehicleStore.vehicles }
+        val filter = vehicleFilter?.takeIf { id -> vehicles.any { it.id == id } }
+        val trips = remember(allTrips, filter) { allTrips.filter { filter == null || it.vehicleId == filter } }
         val status = remember(statusTick) { computeStatus() }
         val configured = remember(statusTick) { SyncSettings.isConfigured(this) }
 
@@ -135,6 +161,10 @@ class MainActivity : ComponentActivity() {
                             Icon(Icons.Filled.MoreVert, contentDescription = "Plus")
                         }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Bilan du mois et recharges") },
+                                onClick = { menu = false; openBilan() },
+                            )
                             DropdownMenuItem(
                                 text = { Text("Exporter tout (GPX, Dawarich)") },
                                 onClick = { menu = false; exportAll("gpx", "*/*") },
@@ -162,11 +192,44 @@ class MainActivity : ComponentActivity() {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item { StatusCard(status) }
+                vehicles.firstOrNull { it.toConfigure }?.let { v ->
+                    item {
+                        StatusCard(
+                            Status(
+                                false, "Nouveau véhicule : ${v.name}",
+                                "Android Auto a reconnu une nouvelle voiture. Donne-lui un nom et indique la capacité de sa batterie, pour que la conso et les coûts soient justes.",
+                                "Régler ce véhicule", { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) },
+                            )
+                        )
+                    }
+                }
+                tripTick.let { TripRecorder.resumeOffer }?.let { prev ->
+                    item {
+                        StatusCard(
+                            Status(
+                                false, "Reprendre le trajet précédent ?",
+                                "Un trajet s'est arrêté à " + TripStats.clock(prev.end) + ", juste avant celui-ci. " +
+                                    "Tu peux les réunir en un seul trajet.",
+                                "Reprendre", { TripRecorder.resumePrevious(this@MainActivity); statusTick++ },
+                            )
+                        )
+                    }
+                }
                 if (active) item { CurrentTripCard(tripTick) }
+                if (vehicles.size > 1) {
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                            FilterChip(selected = filter == null, onClick = { vehicleFilter = null }, label = { Text("Tous") })
+                            vehicles.forEach { v ->
+                                FilterChip(selected = filter == v.id, onClick = { vehicleFilter = v.id }, label = { Text(v.name) })
+                            }
+                        }
+                    }
+                }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        StatCard("Cette semaine", trips, TripStats.startOfWeek(), Modifier.weight(1f))
-                        StatCard("Ce mois", trips, TripStats.startOfMonth(), Modifier.weight(1f))
+                        StatCard("Cette semaine", trips, TripStats.startOfWeek(), Modifier.weight(1f), weekly = true)
+                        StatCard("Ce mois", trips, TripStats.startOfMonth(), Modifier.weight(1f), weekly = false)
                     }
                 }
                 if (trips.isEmpty()) {
@@ -184,7 +247,7 @@ class MainActivity : ComponentActivity() {
                 val shown = trips.take(MAX_TRIPS_SHOWN)
                 shown.groupBy { TripStats.dayLabel(it.start) }.forEach { (day, dayTrips) ->
                     item(key = "jour-$day") { SectionTitle(day) }
-                    items(dayTrips, key = { it.id }) { t -> TripCard(t, configured) { selected = t } }
+                    items(dayTrips, key = { it.id }) { t -> TripCard(t, allTrips, configured, vehicles.size > 1) { selected = t } }
                 }
                 if (trips.size > MAX_TRIPS_SHOWN) {
                     item {
@@ -198,15 +261,37 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        pushResult?.let { r -> PushResultDialog(r) }
+
         selected?.let { t ->
             AlertDialog(
                 onDismissRequest = { selected = null },
                 title = { Text(TripStats.shortDate(t) + " · " + TripStats.hours(t)) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(TripStats.summary(t))
-                        Text(TripStats.battery(t))
+                        TripPlaces.of(this@MainActivity, t.id)?.let { p ->
+                            Text("Départ : " + p.start)
+                            Text("Arrivée : " + p.end)
+                        }
+                        if (vehicles.size > 1) VehiclePicker(t) { selected = null }
+                        Routes.compare(this@MainActivity, t, allTrips)?.let { c ->
+                            Text("Par rapport aux ${c.similar} autres trajets sur ce parcours : " + Routes.compareLine(t, c))
+                        }
+                        Text(TripStats.summaryWithWeather(this@MainActivity, t))
+                        Text(TripStats.batteryAndCost(this@MainActivity, t))
                         Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = {
+                            selected = null
+                            startActivity(Intent(this@MainActivity, TripMapActivity::class.java).putExtra(TripMapActivity.EXTRA_ID, t.id))
+                        }) {
+                            Text("Voir la carte du trajet")
+                        }
+                        if (configured) {
+                            val sent = TripRecorder.isSent(this@MainActivity, t.id)
+                            TextButton(onClick = { selected = null; pushToDawarich(t) }) {
+                                Text(if (sent) "Renvoyer à Dawarich" else "Envoyer à Dawarich maintenant")
+                            }
+                        }
                         TextButton(onClick = { selected = null; share(listOf(TripRecorder.gpxFile(this@MainActivity, t.id)), "*/*") }) {
                             Text("Partager le parcours (GPX)")
                         }
@@ -243,28 +328,92 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Trajet en cours, mis à jour à chaque position GPS : vitesse, distance, batterie, coût. */
     @OptIn(ExperimentalMaterial3ExpressiveApi::class)
     @Composable
     private fun CurrentTripCard(@Suppress("UNUSED_PARAMETER") tick: Int) {
         val scheme = MaterialTheme.colorScheme
+        val live = TripStats.live(this)
         Card(
             shape = MaterialTheme.shapes.extraLarge,
             colors = CardDefaults.cardColors(containerColor = scheme.secondaryContainer, contentColor = scheme.onSecondaryContainer),
         ) {
-            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Trajet en cours", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text(TripStats.current(), style = MaterialTheme.typography.headlineSmall)
+            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    if (TripRecorder.isAuto) "Trajet en cours (automatique)" else "Trajet en cours",
+                    style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                )
+                listOfNotNull(
+                    TripPlaces.liveStart?.let { "Départ : $it" },
+                    TripWeather.liveTemp?.let { "Dehors : " + TripWeather.label(it) },
+                ).takeIf { it.isNotEmpty() }?.let { Text(it.joinToString(" · "), style = MaterialTheme.typography.bodyMedium) }
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        live.speedKmh?.let { String.format(Locale.FRANCE, "%.0f", it) } ?: "–",
+                        style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Bold,
+                    )
+                    Text(" km/h", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 10.dp))
+                }
+                Text(
+                    listOfNotNull(
+                        live.avgKmh?.let { "moyenne " + TripStats.kmh(it) },
+                        live.maxKmh.takeIf { it > 0 }?.let { "max " + TripStats.kmh(it) },
+                    ).joinToString(" · ").ifEmpty { "Vitesse mesurée par le GPS" },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LiveTile("Distance", TripStats.km(live.distanceKm), Modifier.weight(1f))
+                    LiveTile("Durée", TripStats.duration(live.durationMin), Modifier.weight(1f))
+                    LiveTile("Coût", live.cost?.let { TripStats.euros(it) } ?: "–", Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LiveTile(
+                        "Batterie",
+                        live.batteryNow?.let { n ->
+                            live.batteryStart?.let { String.format(Locale.FRANCE, "%.0f → %.0f %%", it, n) }
+                                ?: String.format(Locale.FRANCE, "%.0f %%", n)
+                        } ?: "–",
+                        Modifier.weight(1f),
+                    )
+                    LiveTile("Énergie", live.kwh?.let { String.format(Locale.FRANCE, "%.1f kWh", it) } ?: "–", Modifier.weight(1f))
+                    LiveTile("kWh/100 km", live.kwhPer100?.let { String.format(Locale.FRANCE, "%.1f", it) } ?: "–", Modifier.weight(1f))
+                }
+                live.rangeKm?.let {
+                    Text(String.format(Locale.FRANCE, "Autonomie restante : %.0f km", it), style = MaterialTheme.typography.bodyMedium)
+                }
+                if (live.batteryNow == null) {
+                    Text(
+                        "La batterie s'affiche quand Scénic Trajets est ouvert sur l'écran de la voiture.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 LinearWavyProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
         }
     }
 
     @Composable
-    private fun StatCard(label: String, trips: List<Trip>, since: Long, modifier: Modifier) {
+    private fun LiveTile(label: String, value: String, modifier: Modifier) {
+        Card(
+            modifier = modifier,
+            shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+        ) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            }
+        }
+    }
+
+    @Composable
+    private fun StatCard(label: String, trips: List<Trip>, since: Long, modifier: Modifier, weekly: Boolean) {
         val list = trips.filter { it.start >= since }
         val km = list.sumOf { it.distanceKm }
         val kwh = list.mapNotNull { TripStats.kwh(it) }.sum()
+        val cost = list.mapNotNull { PriceSettings.tripCost(this, it) }.sum()
         Card(
+            onClick = { openBilan(weekly) },
             modifier = modifier,
             shape = MaterialTheme.shapes.extraLarge,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
@@ -278,7 +427,8 @@ class MainActivity : ComponentActivity() {
                 )
                 Text(
                     (if (list.size == 1) "1 trajet" else "${list.size} trajets") +
-                        (if (kwh > 0) String.format(Locale.FRANCE, " · %.0f kWh", kwh) else ""),
+                        (if (kwh > 0) String.format(Locale.FRANCE, " · %.0f kWh", kwh) else "") +
+                        (if (cost > 0) " · " + TripStats.euros(cost) else ""),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -297,7 +447,9 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun TripCard(t: Trip, configured: Boolean, onClick: () -> Unit) {
+    private fun TripCard(t: Trip, all: List<Trip>, configured: Boolean, showVehicle: Boolean, onClick: () -> Unit) {
+        val cmp = remember(t.id, all.size) { Routes.compare(this, t, all) }
+        val kind = remember(t.id, all.size) { Routes.kind(this, t) }
         val cloud = when {
             !configured -> null
             TripRecorder.isSent(this, t.id) -> "☁️ envoyé"
@@ -310,11 +462,24 @@ class MainActivity : ComponentActivity() {
         ) {
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Row {
-                    Text(TripStats.hours(t), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    Text(
+                        TripStats.hours(t) + if (showVehicle) " · " + t.vehicle.name else "",
+                        style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f),
+                    )
                     cloud?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
-                Text(TripStats.summary(t), style = MaterialTheme.typography.bodyLarge)
-                Text(TripStats.battery(t), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val place = TripPlaces.label(this@MainActivity, t.id)
+                listOfNotNull(
+                    if (kind != Routes.Kind.OTHER) (if (kind == Routes.Kind.HOME_WORK) "🏠 → 🏢 " else "🏢 → 🏠 ") + kind.label else null,
+                    place.takeIf { kind == Routes.Kind.OTHER },
+                ).firstOrNull()?.let {
+                    Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                }
+                Text(TripStats.summaryWithWeather(this@MainActivity, t), style = MaterialTheme.typography.bodyLarge)
+                Text(TripStats.batteryAndCost(this@MainActivity, t), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                cmp?.let { c -> Routes.compareLine(t, c).takeIf { it.isNotEmpty() } }?.let {
+                    Text("⏱ $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
     }
@@ -361,10 +526,111 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun openBilan(weekly: Boolean = false) =
+        startActivity(Intent(this, BilanActivity::class.java).putExtra(BilanActivity.EXTRA_WEEKLY, weekly))
+
     private fun openAppSettings() {
         runCatching {
             startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
         }
+    }
+
+    // --- Envoi manuel vers Dawarich ----------------------------------------------------------
+
+    /** Envoie un trajet tout de suite, sans attendre la tâche automatique, et dit ce qui s'est passé. */
+    private fun pushToDawarich(t: Trip) {
+        if (!TripRecorder.pointsFile(this, t.id).exists()) {
+            Toast.makeText(this, "Les points de ce trajet ne sont plus sur le téléphone.", Toast.LENGTH_LONG).show()
+            return
+        }
+        Toast.makeText(this, "Envoi vers Dawarich…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val result = try {
+                val count = Dawarich.uploadTrip(this, t.id)
+                if (!TripRecorder.isSent(this, t.id)) TripRecorder.markSent(this, t.id)
+                PushResult(t, true, "$count points envoyés à Dawarich.")
+            } catch (e: RedirectException) {
+                if (e.umbrel) PushResult(t, false, RedirectException.UMBREL_MESSAGE + "\n\nRedirection vers :\n${e.location}") else PushResult(
+                    t, false,
+                    "Le serveur ne répond pas à l'adresse des réglages :\n${SyncSettings.url(this)}\n\n" +
+                        "Il renvoie vers :\n${e.location}",
+                    e.suggestedUrl,
+                )
+            } catch (e: Exception) {
+                PushResult(t, false, e.message ?: e.javaClass.simpleName)
+            }
+            runOnUiThread {
+                pushResult = result
+                // Le trajet reste en attente : la tâche automatique réessaiera dès qu'Internet revient.
+                if (!result.ok) SyncWorker.runSoon(this)
+                tripTick++
+            }
+        }.start()
+    }
+
+    /** « Véhicule : Scénic ▾ » : pour corriger le véhicule d'un trajet. */
+    @Composable
+    private fun VehiclePicker(t: Trip, done: () -> Unit) {
+        var open by remember { mutableStateOf(false) }
+        Box {
+            TextButton(onClick = { open = true }) { Text("Véhicule : ${t.vehicle.name} ▾") }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                VehicleStore.vehicles.forEach { v ->
+                    DropdownMenuItem(text = { Text(v.name) }, onClick = {
+                        open = false
+                        if (v.id != t.vehicleId) {
+                            TripRecorder.setVehicle(this@MainActivity, t.id, v.id)
+                            statusTick++
+                            done()
+                        }
+                    })
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun PushResultDialog(r: PushResult) {
+        AlertDialog(
+            onDismissRequest = { pushResult = null },
+            title = { Text(if (r.ok) "✅ Trajet envoyé" else "❌ Envoi impossible") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SelectionContainer { Text(r.message) }
+                    r.suggestedUrl?.let { url ->
+                        Text("Utiliser plutôt cette adresse :", fontWeight = FontWeight.SemiBold)
+                        SelectionContainer { Text(url) }
+                        if (url.startsWith("http://")) {
+                            Text(
+                                "Attention : en http://, la clé API passe sans chiffrement. Mieux vaut régler le serveur pour qu'il réponde en https://.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                    if (!r.ok && r.suggestedUrl == null) {
+                        Text(
+                            "Tu peux aussi partager le GPX du trajet et l'importer dans Dawarich.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                val url = r.suggestedUrl
+                if (url != null) {
+                    TextButton(onClick = {
+                        SyncSettings.setUrl(this@MainActivity, url)
+                        pushResult = null
+                        pushToDawarich(r.trip)
+                    }) { Text("Utiliser et réessayer") }
+                } else {
+                    TextButton(onClick = { pushResult = null }) { Text("OK") }
+                }
+            },
+            dismissButton = {
+                if (r.suggestedUrl != null) TextButton(onClick = { pushResult = null }) { Text("Annuler") }
+            },
+        )
     }
 
     // --- Partage ----------------------------------------------------------------------------

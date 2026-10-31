@@ -43,6 +43,8 @@ object SyncSettings {
     fun retentionDays(c: Context) = prefs(c).getInt("retention_jours", 60)
     fun isConfigured(c: Context) = url(c).isNotEmpty() && apiKey(c).isNotEmpty()
 
+    fun setUrl(c: Context, url: String) = prefs(c).edit().putString("dawarich_url", url.trim()).apply()
+
     fun save(c: Context, url: String, key: String, auto: Boolean, retentionDays: Int) {
         prefs(c).edit()
             .putString("dawarich_url", url.trim())
@@ -52,6 +54,25 @@ object SyncSettings {
             .apply()
     }
 }
+
+/** Le serveur renvoie vers une autre adresse. [suggestedUrl] est l'adresse de base à mettre dans les réglages. */
+class RedirectException(val location: String, suggested: String?, code: Int) : Exception(
+    if (isUmbrelLogin(location)) UMBREL_MESSAGE else "le serveur renvoie vers $location ($code)"
+) {
+    /** Sur Umbrel, la redirection mène à la page de connexion : changer d'adresse ne servirait à rien. */
+    val umbrel = isUmbrelLogin(location)
+    val suggestedUrl: String? = if (umbrel) null else suggested
+
+    companion object {
+        fun isUmbrelLogin(location: String) = location.contains("/app-auth")
+        const val UMBREL_MESSAGE =
+            "Umbrel demande de se connecter avant d'ouvrir Dawarich, et bloque donc l'app. " +
+                "Il faut autoriser /api/* sans connexion Umbrel (PROXY_AUTH_WHITELIST dans l'app Dawarich d'Umbrel)."
+    }
+}
+
+/** Trajet sans point à envoyer : ce n'est pas une panne, la tâche automatique passe au suivant. */
+class NothingToSend(message: String) : Exception(message)
 
 /** Envoi des points vers Dawarich, par l'API « Overland » (POST /api/v1/overland/batches). */
 object Dawarich {
@@ -68,22 +89,32 @@ object Dawarich {
         e.message ?: e.javaClass.simpleName
     }
 
-    /** Envoie tous les points d'un trajet, par lots de 500. */
-    fun uploadTrip(context: Context, id: String) {
+    /** Envoie tous les points d'un trajet, par lots de 500. Renvoie le nombre de points envoyés. */
+    fun uploadTrip(context: Context, id: String): Int {
         val file = TripRecorder.pointsFile(context, id)
-        if (!file.exists()) return
+        if (!file.exists()) throw NothingToSend("les points de ce trajet ne sont plus sur le téléphone")
         val batch = JSONArray()
+        var sent = 0
+        // Un appareil par véhicule dans Dawarich (le Scénic garde « scenic », comme avant).
+        VehicleStore.init(context)
+        val device = TripRecorder.trips(context).firstOrNull { it.id == id }?.vehicle?.deviceId ?: VehicleStore.DEFAULT_ID
         file.readLines().drop(1).forEach { line ->
-            toFeature(line)?.let { batch.put(it) }
+            toFeature(line, device)?.let { batch.put(it) }
             if (batch.length() >= 500) {
                 post(context, batch)
+                sent += batch.length()
                 while (batch.length() > 0) batch.remove(0)
             }
         }
-        if (batch.length() > 0) post(context, batch)
+        if (batch.length() > 0) {
+            post(context, batch)
+            sent += batch.length()
+        }
+        if (sent == 0) throw NothingToSend("aucun point GPS valide dans ce trajet")
+        return sent
     }
 
-    private fun toFeature(line: String): JSONObject? {
+    private fun toFeature(line: String, device: String): JSONObject? {
         val c = line.split(";")
         if (c.size < 5) return null
         val time = runCatching { TripRecorder.parseTime(c[0]) }.getOrNull() ?: return null
@@ -91,7 +122,7 @@ object Dawarich {
         val lon = c[2].toDoubleOrNull() ?: return null
         val props = JSONObject()
             .put("timestamp", iso.format(time))
-            .put("device_id", "scenic")
+            .put("device_id", device)
         c[3].toDoubleOrNull()?.let { props.put("speed", it / 3.6) }
         c[4].toDoubleOrNull()?.let { props.put("horizontal_accuracy", it) }
         c.getOrNull(7)?.toDoubleOrNull()?.let { props.put("altitude", it) }
@@ -108,11 +139,22 @@ object Dawarich {
             conn.requestMethod = "POST"
             conn.connectTimeout = 15_000
             conn.readTimeout = 30_000
+            // Une redirection (http → https, page de connexion d'un proxy…) transformerait l'envoi
+            // en simple lecture de page, qui répond « 200 » sans rien enregistrer.
+            conn.instanceFollowRedirects = false
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("Authorization", "Bearer " + SyncSettings.apiKey(context))
             conn.outputStream.use { it.write(JSONObject().put("locations", locations).toString().toByteArray()) }
             val code = conn.responseCode
+            if (code in 300..399) {
+                val raw = conn.getHeaderField("Location") ?: "une adresse inconnue"
+                val absolute = runCatching { URL(url, raw).toString() }.getOrDefault(raw)
+                // Adresse de base : on retire le chemin de l'API pour retrouver ce qu'il faut mettre dans les réglages.
+                val base = absolute.substringBefore("?").substringBefore("/api/v1/").trimEnd('/')
+                    .takeIf { it.startsWith("http") && it != SyncSettings.url(context) }
+                throw RedirectException(absolute, base, code)
+            }
             if (code !in 200..299) {
                 throw IllegalStateException(
                     when (code) {
@@ -120,6 +162,16 @@ object Dawarich {
                         404 -> "adresse introuvable (404) : vérifie l'adresse du serveur"
                         else -> "le serveur a répondu $code"
                     }
+                )
+            }
+            // Dawarich répond en JSON. Une page web à la place veut dire qu'on ne parle pas à l'API
+            // (page de connexion d'un proxy, mauvaise adresse…) : rien n'a été enregistré.
+            val body = runCatching { conn.inputStream.bufferedReader().readText() }.getOrDefault("").trim()
+            val type = conn.contentType.orEmpty()
+            if (type.contains("html", ignoreCase = true) || body.startsWith("<")) {
+                throw IllegalStateException(
+                    "le serveur a renvoyé une page web au lieu de l'API Dawarich ($code) : " +
+                        "vérifie l'adresse et qu'aucune page de connexion ne protège le serveur"
                 )
             }
         } finally {
@@ -172,6 +224,9 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                     Dawarich.uploadTrip(ctx, trip.id)
                     TripRecorder.markSent(ctx, trip.id)
                     Log.i(TAG, "Trajet ${trip.id} envoyé à Dawarich")
+                } catch (e: NothingToSend) {
+                    Log.i(TAG, "Trajet ${trip.id} : ${e.message}")
+                    TripRecorder.markSent(ctx, trip.id)
                 } catch (e: Exception) {
                     Log.w(TAG, "Envoi du trajet ${trip.id} échoué", e)
                     TripRecorder.setLastError(ctx, e.message ?: e.javaClass.simpleName)

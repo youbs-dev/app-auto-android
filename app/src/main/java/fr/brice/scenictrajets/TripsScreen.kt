@@ -13,7 +13,11 @@ import androidx.car.app.model.Template
 class TripsScreen(carContext: CarContext) : Screen(carContext) {
 
     override fun onGetTemplate(): Template {
+        // Plusieurs véhicules : dans la voiture, on ne montre que les trajets de celle-ci.
+        val vid = VehicleStore.currentId
+        val several = VehicleStore.vehicles.size > 1
         val trips = runCatching { TripRecorder.trips(carContext) }.getOrDefault(emptyList())
+            .filter { !several || it.vehicleId == vid }
         // La voiture limite le nombre de lignes (moins pendant la conduite).
         val limit = runCatching {
             carContext.getCarService(ConstraintManager::class.java)
@@ -21,26 +25,46 @@ class TripsScreen(carContext: CarContext) : Screen(carContext) {
         }.getOrDefault(6)
 
         val list = ItemList.Builder().setNoItemsMessage("Aucun trajet pour l'instant")
-        if (trips.isNotEmpty()) {
+        val charges = runCatching { ChargeLog.charges(carContext) }.getOrDefault(emptyList())
+            .filter { !several || it.vehicleId == vid }
+        val month = runCatching { TripStats.months(carContext, trips, charges).firstOrNull() }.getOrNull()
+        var used = 0
+        if (month != null) {
             list.addItem(
                 Row.Builder()
-                    .setTitle("Cette semaine : " + TripStats.total(trips, TripStats.startOfWeek()))
-                    .addText("Ce mois : " + TripStats.total(trips, TripStats.startOfMonth()))
+                    .setTitle("Ce mois : " + TripStats.monthLine(month))
+                    .addText("Cette semaine : " + TripStats.total(trips, TripStats.startOfWeek()))
                     .build()
             )
-            trips.take((limit - 1).coerceAtLeast(1)).forEach { t ->
+            used++
+        }
+        charges.firstOrNull()?.let { ch ->
+            list.addItem(
+                Row.Builder()
+                    .setTitle("⚡ Dernière recharge : " + TripStats.charge(ch))
+                    .addText(listOf(ch.place, TripStats.chargeWhen(ch)).filter { it.isNotEmpty() }.joinToString(" · "))
+                    .build()
+            )
+            used++
+        }
+        if (trips.isNotEmpty()) {
+            trips.take((limit - used).coerceAtLeast(1)).forEach { t ->
+                val places = TripPlaces.label(carContext, t.id)
                 list.addItem(
                     Row.Builder()
-                        .setTitle(TripStats.shortDate(t) + " · " + TripStats.hours(t))
-                        .addText(TripStats.summary(t))
-                        .addText(TripStats.battery(t))
+                        .setTitle(places ?: (TripStats.shortDate(t) + " · " + TripStats.hours(t)))
+                        .addText(
+                            (if (places != null) TripStats.shortDate(t) + " · " + TripStats.hours(t) + " · " else "") +
+                                TripStats.summaryWithWeather(carContext, t)
+                        )
+                        .addText(TripStats.batteryAndCost(carContext, t))
                         .build()
                 )
             }
         }
 
         return ListTemplate.Builder()
-            .setTitle("Derniers trajets")
+            .setTitle(if (several) "Trajets · " + VehicleStore.current.name else "Derniers trajets")
             .setHeaderAction(Action.BACK)
             .setSingleList(list.build())
             .build()

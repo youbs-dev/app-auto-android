@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.Manifest
 import android.location.Location
+import android.util.Log
 import androidx.core.content.ContextCompat
 import java.io.File
 import java.text.SimpleDateFormat
@@ -30,7 +31,10 @@ data class Trip(
     val rangeEnd: Float?,
     val odometerStart: Float?,
     val odometerEnd: Float?,
+    /** Véhicule du trajet (voir [VehicleStore]). */
+    val vehicleId: String = VehicleStore.DEFAULT_ID,
 ) {
+    val vehicle: Vehicle get() = VehicleStore.get(vehicleId)
     val durationMin: Long get() = (end - start) / 60_000
 }
 
@@ -42,7 +46,7 @@ object TripRecorder {
 
     private const val SUMMARY_HEADER =
         "id;debut;fin;duree_min;distance_km;batterie_debut_pct;batterie_fin_pct;" +
-            "autonomie_debut_km;autonomie_fin_km;compteur_debut_km;compteur_fin_km"
+            "autonomie_debut_km;autonomie_fin_km;compteur_debut_km;compteur_fin_km;vehicule"
     private const val POINTS_HEADER =
         "heure;latitude;longitude;vitesse_kmh;precision_m;batterie_pct;autonomie_km;altitude_m"
 
@@ -56,10 +60,23 @@ object TripRecorder {
         private set
     @Volatile var distanceKm = 0.0
         private set
+    /** Trajet déjà confirmé (repris après un plantage ou à la demande) : pas de contrôle « dans la voiture ? ». */
+    @Volatile var confirmed = false
+        private set
     var startTime = 0L
         private set
 
+    /** Vitesse GPS actuelle et maximale du trajet en cours, en km/h. */
+    @Volatile var speedKmh: Float? = null
+        private set
+    @Volatile var maxSpeedKmh = 0f
+        private set
+    /** Dernière fois que la voiture roulait (mis à jour par TripService). */
+    @Volatile var lastMovingAt = 0L
+
     private var tripId = ""
+    /** Dernière position GPS connue, même hors trajet (pour situer les recharges). */
+    @Volatile private var lastFix: Location? = null
     private var lastLocation: Location? = null
     private var batteryStart: Float? = null
     /** Batterie au départ du trajet en cours (pour afficher ce qui a été utilisé). */
@@ -67,6 +84,16 @@ object TripRecorder {
     private var rangeStart: Float? = null
     private var odometerStart: Float? = null
     private val listeners = mutableSetOf<() -> Unit>()
+
+    /** Un nouveau trajet qui commence moins de 5 min après le précédent peut le continuer. */
+    private const val RESUME_GAP_MS = 5 * 60_000L
+    /** La proposition de reprise reste affichée pendant les 10 premières minutes du nouveau trajet. */
+    private const val RESUME_OFFER_MS = 10 * 60_000L
+    @Volatile private var resumeCandidate: Trip? = null
+
+    /** Trajet précédent que l'on peut reprendre, ou null. */
+    val resumeOffer: Trip?
+        get() = resumeCandidate?.takeIf { isActive && System.currentTimeMillis() - startTime < RESUME_OFFER_MS }
 
     fun hasLocationPermission(context: Context) =
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
@@ -78,23 +105,147 @@ object TripRecorder {
 
     fun addListener(l: () -> Unit) { synchronized(listeners) { listeners += l } }
     fun removeListener(l: () -> Unit) { synchronized(listeners) { listeners -= l } }
+    /** Prévient les écrans qu'une information d'un trajet a changé (lieux retrouvés, par exemple). */
+    fun changed() = notifyListeners()
+
     private fun notifyListeners() { synchronized(listeners) { listeners.toList() }.forEach { it() } }
 
     /** Démarre un trajet. Appelé par TripService (automatiquement ou depuis le bouton). */
     @Synchronized
     fun begin(context: Context, auto: Boolean) {
         if (isActive) return
+        if (recoverAfterCrash(context, auto)) return
         isAuto = auto
+        confirmed = false
         startTime = System.currentTimeMillis()
         tripId = idFormat.format(Date(startTime))
         distanceKm = 0.0
+        speedKmh = null
+        maxSpeedKmh = 0f
         lastLocation = null
         batteryStart = CarSnapshot.batteryPercent
         rangeStart = CarSnapshot.rangeKm
         odometerStart = CarSnapshot.odometerKm
         pointsFile(context, tripId).writeText(POINTS_HEADER + "\n")
+        resumeCandidate = runCatching { trips(context).firstOrNull() }.getOrNull()?.takeIf {
+            startTime - it.end in 0..RESUME_GAP_MS && it.vehicleId == VehicleStore.currentId
+        }
         isActive = true
+        saveActive(context)
         notifyListeners()
+    }
+
+    // --- Trajet en cours gardé sur le téléphone, pour survivre à un plantage ----------------------
+
+    private fun activePrefs(c: Context) = c.getSharedPreferences("trajet_en_cours", Context.MODE_PRIVATE)
+
+    private fun saveActive(c: Context) {
+        activePrefs(c).edit()
+            .putString("id", tripId).putLong("debut", startTime).putBoolean("auto", isAuto)
+            .putString("vehicule", VehicleStore.currentId)
+            .putFloat("batterie", batteryStart ?: -1f).putFloat("autonomie", rangeStart ?: -1f)
+            .putFloat("compteur", odometerStart ?: -1f)
+            .commit()
+    }
+
+    private fun clearActive(c: Context) { activePrefs(c).edit().clear().commit() }
+
+    /**
+     * Après un plantage, le trajet interrompu est repris tout seul s'il a reçu une position
+     * il y a moins de 10 min. Plus ancien, il est rangé dans l'historique tel quel.
+     */
+    private fun recoverAfterCrash(c: Context, auto: Boolean): Boolean {
+        val p = activePrefs(c)
+        val id = p.getString("id", null) ?: return false
+        val file = pointsFile(c, id)
+        val points = runCatching { readPoints(file) }.getOrDefault(emptyList())
+        val start = p.getLong("debut", 0L)
+        fun f(k: String) = p.getFloat(k, -1f).takeIf { it >= 0f }
+        val lastTime = points.lastOrNull()?.time ?: file.lastModified()
+        val now = System.currentTimeMillis()
+        if (!file.exists() || start == 0L) { clearActive(c); return false }
+
+        // Distance recalculée à partir des points déjà enregistrés.
+        var dist = 0.0
+        var prev: Location? = null
+        points.filter { it.accuracy <= 50f }.forEach { pt ->
+            val l = Location("fichier").apply { latitude = pt.lat; longitude = pt.lon }
+            prev?.let { dist += it.distanceTo(l) / 1000.0 }
+            prev = l
+        }
+
+        if (now - lastTime <= 10 * 60_000L) {
+            tripId = id
+            startTime = start
+            isAuto = p.getBoolean("auto", auto)
+            distanceKm = dist
+            speedKmh = null
+            maxSpeedKmh = 0f
+            lastLocation = prev
+            batteryStart = f("batterie") ?: CarSnapshot.batteryPercent
+            rangeStart = f("autonomie") ?: CarSnapshot.rangeKm
+            odometerStart = f("compteur") ?: CarSnapshot.odometerKm
+            resumeCandidate = null
+            confirmed = true
+            isActive = true
+            Log.i("ScenicTrajet", "Trajet $id repris après un plantage")
+            notifyListeners()
+            return true
+        }
+
+        // Trop ancien : on range le trajet interrompu dans l'historique, avec la fin connue.
+        clearActive(c)
+        if (dist >= 0.2) {
+            val summary = summaryFile(c)
+            if (!summary.exists()) summary.writeText(SUMMARY_HEADER + "\n")
+            val last = points.lastOrNull()
+            val trip = Trip(
+                id, start, lastTime, dist, f("batterie"), last?.battery, f("autonomie"), last?.range,
+                f("compteur"), null, p.getString("vehicule", null) ?: VehicleStore.currentId,
+            )
+            summary.appendText(toCsv(trip) + "\n")
+            runCatching { writeGpx(c, id) }
+        } else {
+            file.delete()
+        }
+        return false
+    }
+
+    private class SavedPoint(val time: Long, val lat: Double, val lon: Double, val accuracy: Float, val battery: Float?, val range: Float?)
+
+    private fun readPoints(f: File): List<SavedPoint> {
+        if (!f.exists()) return emptyList()
+        return f.readLines().drop(1).mapNotNull { l ->
+            val x = l.split(";")
+            if (x.size < 5) return@mapNotNull null
+            SavedPoint(
+                parseTime(x[0])?.time ?: return@mapNotNull null,
+                x[1].toDoubleOrNull() ?: return@mapNotNull null,
+                x[2].toDoubleOrNull() ?: return@mapNotNull null,
+                x[4].toFloatOrNull() ?: 999f,
+                x.getOrNull(5)?.toFloatOrNull(), x.getOrNull(6)?.toFloatOrNull(),
+            )
+        }
+    }
+
+    /**
+     * Appelé à chaque nouvelle lecture de la voiture. Si le trajet a démarré avant que
+     * la voiture n'envoie ses valeurs, on prend la première lecture comme point de départ.
+     */
+    @Synchronized
+    fun onCarData() {
+        if (!isActive) return
+        if (batteryStart == null) batteryStart = CarSnapshot.batteryPercent
+        if (rangeStart == null) rangeStart = CarSnapshot.rangeKm
+        if (odometerStart == null) odometerStart = CarSnapshot.odometerKm
+    }
+
+    /** Dernière position connue (latitude, longitude), gardée aussi après la fin du trajet. */
+    fun lastKnownPosition(context: Context): Pair<Double, Double>? {
+        lastFix?.let { return it.latitude to it.longitude }
+        val p = context.getSharedPreferences("position", Context.MODE_PRIVATE)
+        if (!p.contains("lat")) return null
+        return p.getFloat("lat", 0f).toDouble() to p.getFloat("lon", 0f).toDouble()
     }
 
     /** Termine le trajet en cours et l'ajoute à l'historique (les trajets de moins de 200 m sont ignorés). */
@@ -102,6 +253,12 @@ object TripRecorder {
     fun finish(context: Context) {
         if (!isActive) return
         isActive = false
+        resumeCandidate = null
+        clearActive(context)
+        lastFix?.let {
+            context.getSharedPreferences("position", Context.MODE_PRIVATE).edit()
+                .putFloat("lat", it.latitude.toFloat()).putFloat("lon", it.longitude.toFloat()).apply()
+        }
         if (distanceKm < 0.2) {
             pointsFile(context, tripId).delete()
             notifyListeners()
@@ -113,6 +270,8 @@ object TripRecorder {
             tripId, startTime, System.currentTimeMillis(), distanceKm,
             batteryStart, CarSnapshot.batteryPercent, rangeStart, CarSnapshot.rangeKm,
             odometerStart, CarSnapshot.odometerKm,
+            // Le véhicule est connu dès qu'Android Auto a donné le modèle de la voiture.
+            VehicleStore.currentId,
         )
         summary.appendText(toCsv(trip) + "\n")
         runCatching { writeGpx(context, tripId) }
@@ -120,7 +279,57 @@ object TripRecorder {
         LocalBackup.save(context, gpxFile(context, tripId))
         LocalBackup.save(context, pointsFile(context, tripId))
         runCatching { SyncWorker.runSoon(context) }
+        TripPlaces.resolveMissingSoon(context)
+        Routes.computeMissingSoon(context)
+        TripWeather.resolveMissingSoon(context)
         notifyListeners()
+    }
+
+    /**
+     * Continue le trajet précédent au lieu d'en créer un nouveau : les points déjà enregistrés
+     * sont ajoutés à ceux du trajet précédent, qui retrouve son heure et sa batterie de départ.
+     */
+    @Synchronized
+    fun resumePrevious(context: Context): Boolean {
+        val prev = resumeOffer ?: return false
+        resumeCandidate = null
+        val current = pointsFile(context, tripId)
+        val target = pointsFile(context, prev.id)
+        val newPoints = current.takeIf { it.exists() }?.readLines()?.drop(1)?.filter { it.isNotBlank() }.orEmpty()
+        if (!target.exists()) target.writeText(POINTS_HEADER + "\n")
+        if (newPoints.isNotEmpty()) target.appendText(newPoints.joinToString("\n") + "\n")
+        current.delete()
+
+        // Le trajet précédent sort de l'historique : il y reviendra, complet, à la fin.
+        val summary = summaryFile(context)
+        if (summary.exists()) {
+            val kept = trips(context).reversed().filter { it.id != prev.id }
+            summary.writeText(SUMMARY_HEADER + "\n" + kept.joinToString("") { toCsv(it) + "\n" })
+        }
+        // Ce qui dépend de la fin du trajet sera recalculé : GPX, lieu d'arrivée, extrémités, envoi Dawarich.
+        gpxFile(context, prev.id).delete()
+        forgetId(File(dir(context), "lieux.csv"), prev.id)
+        forgetId(File(dir(context), "extremites.csv"), prev.id)
+        sentFile(context).takeIf { it.exists() }?.let { f ->
+            f.writeText(f.readLines().filter { it.isNotBlank() && it != prev.id }.joinToString("") { it + "\n" })
+        }
+
+        tripId = prev.id
+        startTime = prev.start
+        distanceKm += prev.distanceKm
+        batteryStart = prev.batteryStart ?: batteryStart
+        rangeStart = prev.rangeStart ?: rangeStart
+        odometerStart = prev.odometerStart ?: odometerStart
+        confirmed = true
+        saveActive(context)
+        notifyListeners()
+        return true
+    }
+
+    /** Retire d'un fichier « id;… » les lignes d'un trajet. */
+    private fun forgetId(f: File, id: String) {
+        if (!f.exists()) return
+        f.writeText(f.readLines().filter { it.isNotBlank() && !it.startsWith("$id;") }.joinToString("") { it + "\n" })
     }
 
     /** Abandonne le trajet en cours sans l'enregistrer (par exemple : pas dans le Scénic). */
@@ -128,6 +337,7 @@ object TripRecorder {
     fun discard(context: Context) {
         if (!isActive) return
         isActive = false
+        clearActive(context)
         pointsFile(context, tripId).delete()
         notifyListeners()
     }
@@ -182,9 +392,16 @@ object TripRecorder {
     /** Appelé par TripService à chaque nouvelle position GPS. */
     @Synchronized
     fun onLocation(context: Context, loc: Location) {
+        if (loc.accuracy <= 50f) lastFix = loc
         if (!isActive) return
+        speedKmh = if (loc.hasSpeed()) loc.speed * 3.6f else null
+        speedKmh?.let { if (loc.accuracy <= 30f && it > maxSpeedKmh) maxSpeedKmh = it }
         // On ignore les positions trop imprécises pour le calcul de distance.
         if (loc.accuracy <= 50f) {
+            if (lastLocation == null) {
+                TripPlaces.onTripStart(context, startTime, loc.latitude, loc.longitude)
+                TripWeather.onTripStart(startTime, loc.latitude, loc.longitude)
+            }
             lastLocation?.let { distanceKm += it.distanceTo(loc) / 1000.0 }
             lastLocation = loc
         }
@@ -214,6 +431,7 @@ object TripRecorder {
                     c[0], parseTime(c[1])!!.time, parseTime(c[2])!!.time,
                     c[4].toDouble(), c[5].toFloatOrNull(), c[6].toFloatOrNull(),
                     c[7].toFloatOrNull(), c[8].toFloatOrNull(), c[9].toFloatOrNull(), c[10].toFloatOrNull(),
+                    c.getOrNull(11)?.ifBlank { null } ?: VehicleStore.DEFAULT_ID,
                 )
             }.getOrNull()
         }.reversed()
@@ -222,8 +440,32 @@ object TripRecorder {
     private fun toCsv(t: Trip) = listOf(
         t.id, dateFormat.format(Date(t.start)), dateFormat.format(Date(t.end)), t.durationMin.toString(),
         "%.2f".format(Locale.US, t.distanceKm), fmt(t.batteryStart), fmt(t.batteryEnd),
-        fmt(t.rangeStart), fmt(t.rangeEnd), fmt(t.odometerStart), fmt(t.odometerEnd),
+        fmt(t.rangeStart), fmt(t.rangeEnd), fmt(t.odometerStart), fmt(t.odometerEnd), t.vehicleId,
     ).joinToString(";")
+
+    /** Ajoute la colonne « vehicule » aux anciens historiques : les trajets d'avant sont ceux du Scénic. */
+    @Synchronized
+    fun migrateVehicleColumn(context: Context) {
+        val f = summaryFile(context)
+        if (!f.exists()) return
+        val lines = f.readLines()
+        if (lines.isEmpty() || lines[0].endsWith(";vehicule")) return
+        val out = StringBuilder(SUMMARY_HEADER).append('\n')
+        lines.drop(1).filter { it.isNotBlank() }.forEach { l ->
+            out.append(if (l.split(";").size == 11) l + ";" + VehicleStore.DEFAULT_ID else l).append('\n')
+        }
+        f.writeText(out.toString())
+    }
+
+    /** Change le véhicule d'un trajet (correction à la main depuis le téléphone). */
+    @Synchronized
+    fun setVehicle(context: Context, id: String, vehicleId: String) {
+        val f = summaryFile(context)
+        if (!f.exists()) return
+        val updated = trips(context).reversed().map { if (it.id == id) it.copy(vehicleId = vehicleId) else it }
+        f.writeText(SUMMARY_HEADER + "\n" + updated.joinToString("") { toCsv(it) + "\n" })
+        notifyListeners()
+    }
 
     private fun fmt(v: Float?) = v?.let { "%.1f".format(Locale.US, it) } ?: ""
 }

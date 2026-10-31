@@ -9,10 +9,12 @@ import androidx.car.app.Screen
 import androidx.car.app.model.Action
 import androidx.car.app.model.ActionStrip
 import androidx.car.app.model.CarColor
+import androidx.car.app.model.CarIcon
 import androidx.car.app.model.Pane
 import androidx.car.app.model.PaneTemplate
 import androidx.car.app.model.Row
 import androidx.car.app.model.Template
+import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import java.util.Locale
@@ -60,7 +62,7 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
     private fun refresh() {
         if (refreshPending) return
         refreshPending = true
-        handler.postDelayed({ refreshPending = false; invalidate() }, 1000)
+        handler.postDelayed({ refreshPending = false; invalidate() }, 2000)
     }
 
     override fun onGetTemplate(): Template {
@@ -81,12 +83,27 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
             )
         }
         pane.addAction(tripAction())
-        pane.addAction(
-            Action.Builder()
-                .setTitle("Trajets")
-                .setOnClickListener { screenManager.push(TripsScreen(carContext)) }
-                .build()
-        )
+        if (TripRecorder.resumeOffer != null) {
+            // Juste après un arrêt de quelques instants : continuer le trajet précédent.
+            pane.addAction(
+                Action.Builder()
+                    .setTitle("Reprendre")
+                    .setOnClickListener {
+                        if (TripRecorder.resumePrevious(carContext)) {
+                            CarToast.makeText(carContext, "Trajet précédent repris", CarToast.LENGTH_SHORT).show()
+                        }
+                        invalidate()
+                    }
+                    .build()
+            )
+        } else {
+            pane.addAction(
+                Action.Builder()
+                    .setTitle("Trajets")
+                    .setOnClickListener { screenManager.push(TripsScreen(carContext)) }
+                    .build()
+            )
+        }
 
         return PaneTemplate.Builder(pane.build())
             .setTitle("Scénic Trajets")
@@ -95,7 +112,18 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
                 ActionStrip.Builder()
                     .addAction(
                         Action.Builder()
-                            .setTitle("Diagnostic")
+                            .setTitle("Bornes")
+                            .setOnClickListener { screenManager.push(ChargersScreen(carContext)) }
+                            .build()
+                    )
+                    .addAction(
+                        // Une seule action avec texte est permise ici : Diagnostic n'a qu'une icône.
+                        Action.Builder()
+                            .setIcon(
+                                CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_diagnostic))
+                                    .setTint(CarColor.DEFAULT)
+                                    .build()
+                            )
                             .setOnClickListener { screenManager.push(DiagnosticScreen(carContext, this)) }
                             .build()
                     )
@@ -104,10 +132,21 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
             .build()
     }
 
+    /** Pendant un trajet : distance, durée, vitesse et moyenne, mises à jour en direct. */
     private fun tripRow(): Row = if (TripRecorder.isActive) {
+        val live = TripStats.live(carContext)
         Row.Builder()
-            .setTitle(if (TripRecorder.isAuto) "🔴 Trajet en cours (automatique)" else "🔴 Trajet en cours")
-            .addText(TripStats.current())
+            .setTitle("🔴 " + TripStats.km(live.distanceKm) + " · " + TripStats.duration(live.durationMin))
+            .addText(TripStats.liveSpeed(live))
+            .addText(
+                TripRecorder.resumeOffer?.let { "Arrêté à " + TripStats.clock(it.end) + " : touche Reprendre pour continuer ce trajet" }
+                    ?: listOfNotNull(
+                    TripPlaces.liveStart?.let { "Départ : $it" },
+                    TripWeather.liveTemp?.let { TripWeather.label(it) },
+                ).joinToString(" · ").ifEmpty {
+                    if (TripRecorder.isAuto) "Trajet en cours (automatique)" else "Trajet en cours"
+                }
+            )
             .build()
     } else {
         Row.Builder()
@@ -129,15 +168,28 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
             permissionMissing -> "Accès non autorisé"
             else -> "En attente de la voiture…"
         }
-        return Row.Builder().setTitle("🔋 Batterie").addText(text).build()
+        val low = BatteryAlert.isLow(carContext)
+        val row = Row.Builder().setTitle(if (low) "🪫 Batterie basse · touche Bornes" else "🔋 Batterie").addText(text)
+        // Pendant un trajet : batterie utilisée, consommation et coût depuis le départ.
+        if (TripRecorder.isActive && pct != null) row.addText(TripStats.liveEnergy(TripStats.live(carContext)))
+        return row.build()
     }
 
+    private var todayCache: Pair<Pair<Boolean, Long>, String>? = null
+
+    /** Total du jour, relu seulement quand un trajet commence ou finit (pas à chaque position). */
     private fun todayRow(): Row {
-        val trips = runCatching { TripRecorder.trips(carContext) }.getOrDefault(emptyList())
-        return Row.Builder()
-            .setTitle("Aujourd'hui")
-            .addText(TripStats.total(trips, TripStats.startOfDay(System.currentTimeMillis())))
-            .build()
+        val key = TripRecorder.isActive to TripRecorder.startTime
+        val text = todayCache?.takeIf { it.first == key }?.second ?: run {
+            val several = VehicleStore.vehicles.size > 1
+            val trips = runCatching { TripRecorder.trips(carContext) }.getOrDefault(emptyList())
+                .filter { !several || it.vehicleId == VehicleStore.currentId }
+            val today = trips.filter { it.start >= TripStats.startOfDay(System.currentTimeMillis()) }
+            val cost = today.mapNotNull { PriceSettings.tripCost(carContext, it) }.sum()
+            (TripStats.total(trips, TripStats.startOfDay(System.currentTimeMillis())) +
+                (if (cost > 0) " · " + TripStats.euros(cost) else "")).also { todayCache = key to it }
+        }
+        return Row.Builder().setTitle("Aujourd'hui").addText(text).build()
     }
 
     private fun tripAction(): Action = if (TripRecorder.isActive) {

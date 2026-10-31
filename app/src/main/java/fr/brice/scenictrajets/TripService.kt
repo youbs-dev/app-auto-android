@@ -9,6 +9,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.drawable.Icon
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -45,6 +46,7 @@ class TripService : Service() {
         const val ACTION_WATCH = "fr.brice.scenictrajets.WATCH"
         const val ACTION_START = "fr.brice.scenictrajets.START"
         const val ACTION_STOP = "fr.brice.scenictrajets.STOP"
+        const val ACTION_RESUME = "fr.brice.scenictrajets.RESUME"
 
         fun send(context: Context, action: String) {
             if (!TripRecorder.hasLocationPermission(context)) return
@@ -93,6 +95,8 @@ class TripService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        CrashLog.install(this)
+        VehicleStore.init(this)
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Trajets", NotificationManager.IMPORTANCE_LOW)
@@ -131,6 +135,7 @@ class TripService : Service() {
                 lastMoving = System.currentTimeMillis()
                 TripRecorder.begin(this, auto = false)
             }
+            ACTION_RESUME -> TripRecorder.resumePrevious(this)
             ACTION_STOP -> {
                 TripRecorder.finish(this)
                 stopSelf()
@@ -144,7 +149,10 @@ class TripService : Service() {
     private fun onLocation(loc: Location) {
         val now = System.currentTimeMillis()
         val moving = loc.hasSpeed() && loc.speed >= MOVING_SPEED_MS && loc.accuracy <= 50f
-        if (moving) lastMoving = now
+        if (moving) {
+            lastMoving = now
+            TripRecorder.lastMovingAt = now
+        }
         if (!TripRecorder.isActive && moving && now < watchUntil) {
             aaSeenDuringTrip = aaConnected
             TripRecorder.begin(this, auto = true)
@@ -155,8 +163,10 @@ class TripService : Service() {
 
     private fun checkTimeouts() {
         val now = System.currentTimeMillis()
+        // Retire le bouton « Reprendre » de la notification quand la proposition expire.
+        if (TripRecorder.isActive) updateNotification()
         if (TripRecorder.isActive) {
-            if (TripRecorder.isAuto && !aaSeenDuringTrip && now - TripRecorder.startTime > AA_GRACE_MS) {
+            if (TripRecorder.isAuto && !TripRecorder.confirmed && !aaSeenDuringTrip && now - TripRecorder.startTime > AA_GRACE_MS) {
                 Log.i(TAG, "Pas d'Android Auto : trajet abandonné (pas dans le Scénic)")
                 TripRecorder.discard(this)
                 stopSelf()
@@ -181,12 +191,22 @@ class TripService : Service() {
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
         val title = if (TripRecorder.isActive) "Trajet en cours d'enregistrement" else "En attente du départ…"
-        return Notification.Builder(this, CHANNEL_ID)
+        val b = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_car)
             .setContentTitle(title)
             .setContentIntent(open)
             .setOngoing(true)
-            .build()
+        TripRecorder.resumeOffer?.let { prev ->
+            b.setContentText("Le trajet précédent s'est arrêté à " + TripStats.clock(prev.end) + ". Le reprendre ?")
+            val resume = PendingIntent.getService(
+                this, 1, Intent(this, TripService::class.java).setAction(ACTION_RESUME),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            b.addAction(
+                Notification.Action.Builder(Icon.createWithResource(this, R.drawable.ic_car), "Reprendre le trajet précédent", resume).build()
+            )
+        }
+        return b.build()
     }
 
     private fun updateNotification() {
