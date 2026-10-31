@@ -10,6 +10,7 @@ import android.net.Uri
 import android.text.SpannableString
 import android.text.Spanned
 import android.util.Log
+import androidx.car.app.CarAppPermission
 import androidx.car.app.CarContext
 import androidx.car.app.CarToast
 import androidx.car.app.Screen
@@ -206,7 +207,8 @@ class ChargersScreen(carContext: CarContext) : Screen(carContext) {
      * l'app ne plante plus et on sait ce qui ne va pas.
      */
     override fun onGetTemplate(): Template = try {
-        mapTemplate()
+        // La bibliothèque vérifie cette autorisation hors de ce try : sans elle, on reste sur la liste.
+        if (canShowMap()) mapTemplate() else listTemplate()
     } catch (e: Exception) {
         Log.e("ScenicBornes", "Carte des bornes refusée", e)
         try {
@@ -219,6 +221,10 @@ class ChargersScreen(carContext: CarContext) : Screen(carContext) {
                 .build()
         }
     }
+
+    private fun canShowMap() = runCatching {
+        CarAppPermission.checkHasLibraryPermission(carContext, CarAppPermission.MAP_TEMPLATES)
+    }.isSuccess
 
     /** Liste sans carte : secours si la carte n'est pas acceptée par la voiture. */
     private fun listTemplate(): Template {

@@ -26,6 +26,8 @@
 
     <!-- Envoi des trajets vers Dawarich -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Carte des bornes (PlaceListMapTemplate) : sans cette ligne, Android Auto fait planter l'app. -->
+    <uses-permission android:name="androidx.car.app.MAP_TEMPLATES" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
