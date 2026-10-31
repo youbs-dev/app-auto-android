@@ -486,6 +486,9 @@ class SettingsActivity : ComponentActivity() {
     private fun VehicleDialog(v: Vehicle, close: () -> Unit) {
         var name by remember { mutableStateOf(v.name) }
         var kwh by remember { mutableStateOf(num(v.batteryKwh)) }
+        var full by remember { mutableStateOf(num(v.batteryFull)) }
+        var carShows by remember { mutableStateOf("") }
+        val raw = CarSnapshot.rawBatteryPercent.takeIf { v.id == VehicleStore.currentId }
         var message by remember { mutableStateOf<String?>(null) }
         val c = this
         androidx.compose.material3.AlertDialog(
@@ -498,6 +501,20 @@ class SettingsActivity : ComponentActivity() {
                         label = { Text("Nom") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                     )
                     NumberField("Capacité utile de la batterie (kWh)", kwh, "87") { kwh = it }
+                    NumberField("Batterie pleine à (% envoyé par Android Auto)", full, "100") { full = it }
+                    Hint(
+                        "Android Auto envoie la charge brute, la voiture affiche un peu plus. " +
+                            "100 = pas de correction. Scénic : 96,3 (79 % envoyé = 82 % affiché)."
+                    )
+                    if (raw != null) {
+                        NumberField(
+                            String.format(java.util.Locale.FRANCE, "Android Auto envoie %.1f %% : la voiture affiche (%%)", raw),
+                            carShows, "82",
+                        ) {
+                            carShows = it
+                            parsePrice(it)?.takeIf { s -> s > raw && s <= 100f }?.let { s -> full = num(raw * 100f / s) }
+                        }
+                    }
                     if (v.model.isNotEmpty()) Hint("Reconnu dans Android Auto comme « ${v.model} ».")
                     message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     if (VehicleStore.vehicles.any { it.id == v.id } && VehicleStore.vehicles.size > 1) {
@@ -511,10 +528,13 @@ class SettingsActivity : ComponentActivity() {
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {
                     val k = parsePrice(kwh)
+                    val f = parsePrice(full)
                     if (name.isBlank() || k == null || k < 5f) {
                         message = "Indique un nom et une capacité (par exemple 52 ou 87)."
+                    } else if (f == null || f < 50f || f > 100f) {
+                        message = "« Batterie pleine à » doit être entre 50 et 100 (100 = pas de correction)."
                     } else {
-                        VehicleStore.upsert(c, v.copy(name = name.trim().replace(";", ","), batteryKwh = k, toConfigure = false))
+                        VehicleStore.upsert(c, v.copy(name = name.trim().replace(";", ","), batteryKwh = k, batteryFull = f, toConfigure = false))
                         close()
                     }
                 }) { Text("Enregistrer") }

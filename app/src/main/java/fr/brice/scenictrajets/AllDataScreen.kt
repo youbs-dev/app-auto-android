@@ -49,7 +49,9 @@ class AllDataScreen(carContext: CarContext) : Screen(carContext) {
     private val values = linkedMapOf<String, String>()
 
     private val energy = OnCarDataAvailableListener<EnergyLevel> { e ->
-        put("Batterie", v(e.batteryPercent) { pct(it) })
+        put("Batterie", v(e.batteryPercent) {
+            pct(it) + " envoyé · " + pct(VehicleStore.current.shownPercent(it)) + " affiché par la voiture"
+        })
         put("Carburant", v(e.fuelPercent) { pct(it) })
         put("Énergie basse", v(e.energyIsLow) { if (it) "oui" else "non" })
         put("Autonomie", v(e.rangeRemainingMeters) { String.format(Locale.FRANCE, "%.0f (unité envoyée : m)", it) })

@@ -44,7 +44,8 @@ class CarData(private val carContext: CarContext, private val onChange: () -> Un
     private var vehicleKnown = false
 
     private val energyListener = OnCarDataAvailableListener<EnergyLevel> { e ->
-        CarSnapshot.batteryPercent = ok(e.batteryPercent)
+        CarSnapshot.rawBatteryPercent = ok(e.batteryPercent)
+        CarSnapshot.batteryPercent = CarSnapshot.rawBatteryPercent?.let { VehicleStore.current.shownPercent(it) }
         CarSnapshot.rangeKm = ok(e.rangeRemainingMeters)?.div(1000f)
         TripRecorder.onCarData()
         CarSnapshot.batteryPercent?.let { pct ->

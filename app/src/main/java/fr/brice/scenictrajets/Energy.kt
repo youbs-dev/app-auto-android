@@ -119,11 +119,18 @@ object ChargeLog {
         val kPct = if (vid == VehicleStore.DEFAULT_ID) "pct" else "pct_$vid"
         val kTime = if (vid == VehicleStore.DEFAULT_ID) "heure" else "heure_$vid"
         if (!p.contains(kPct)) {
-            p.edit().putFloat(kPct, pct).putLong(kTime, now).apply()
+            p.edit().putFloat(kPct, pct).putLong(kTime, now)
+                .putFloat(if (vid == VehicleStore.DEFAULT_ID) "pleine" else "pleine_$vid", VehicleStore.current.batteryFull).apply()
             return
         }
-        val base = p.getFloat(kPct, pct)
+        val kFull = if (vid == VehicleStore.DEFAULT_ID) "pleine" else "pleine_$vid"
+        val full = VehicleStore.current.batteryFull
+        // Référence notée avec une autre correction de batterie : on la convertit, sinon le
+        // changement de correction ressemblerait à une recharge.
+        val refFull = p.getFloat(kFull, 100f)
+        val base = p.getFloat(kPct, pct).let { if (refFull != full) (it * refFull / full).coerceAtMost(100f) else it }
         val baseTime = p.getLong(kTime, now)
+        if (refFull != full) p.edit().putFloat(kPct, base).putFloat(kFull, full).apply()
         // En roulant, le % peut remonter un peu (freinage régénératif) : ce n'est pas une recharge.
         // Si la lecture précédente est ancienne (session précédente), la hausse vient d'une recharge.
         val moving = TripRecorder.isActive && now - TripRecorder.lastMovingAt < 2 * 60_000L &&

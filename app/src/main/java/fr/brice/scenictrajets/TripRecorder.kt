@@ -13,7 +13,10 @@ import java.util.Locale
 
 /** Dernières valeurs lues dans la voiture (mises à jour par l'écran Android Auto). */
 object CarSnapshot {
+    /** Charge comme l'affiche la voiture (corrigée, voir [Vehicle.batteryFull]). */
     @Volatile var batteryPercent: Float? = null
+    /** Charge brute envoyée par Android Auto. */
+    @Volatile var rawBatteryPercent: Float? = null
     @Volatile var rangeKm: Float? = null
     /** Compteur kilométrique (le Scénic l'envoie déjà en km). */
     @Volatile var odometerKm: Float? = null

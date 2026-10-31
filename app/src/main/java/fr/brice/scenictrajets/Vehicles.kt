@@ -17,7 +17,15 @@ data class Vehicle(
     val model: String = "",
     /** Créé automatiquement à la première connexion : réglages à vérifier. */
     val toConfigure: Boolean = false,
+    /**
+     * Charge envoyée par Android Auto quand la voiture affiche 100 % : Android Auto donne la charge
+     * brute, le tableau de bord la corrige (réserve en haut). Scénic : 79 % envoyé = 82 % affiché.
+     */
+    val batteryFull: Float = 100f,
 ) {
+    /** Charge telle que la voiture l'affiche, à partir de la valeur envoyée par Android Auto. */
+    fun shownPercent(raw: Float): Float = (raw * 100f / batteryFull.coerceIn(50f, 100f)).coerceAtMost(100f)
+
     /** Identifiant d'appareil envoyé à Dawarich. */
     val deviceId: String get() = id
 }
@@ -31,7 +39,7 @@ object VehicleStore {
     private const val PREFS = "vehicules"
 
     @Volatile private var loaded = false
-    @Volatile var vehicles: List<Vehicle> = listOf(Vehicle(DEFAULT_ID, "Scénic"))
+    @Volatile var vehicles: List<Vehicle> = listOf(Vehicle(DEFAULT_ID, "Scénic", batteryFull = 96.3f))
         private set
     /** Véhicule reconnu lors de la dernière connexion à Android Auto. */
     @Volatile var currentId: String = DEFAULT_ID
@@ -144,6 +152,7 @@ object VehicleStore {
         .put("id", v.id).put("nom", v.name).put("electrique", v.electric)
         .put("batterie_kwh", v.batteryKwh.toDouble()).put("conso_l100", v.fuelPer100.toDouble())
         .put("modele", v.model).put("a_configurer", v.toConfigure)
+        .put("batterie_pleine", v.batteryFull.toDouble())
 
     private fun fromJson(o: JSONObject) = Vehicle(
         id = o.getString("id"),
@@ -153,5 +162,9 @@ object VehicleStore {
         fuelPer100 = o.optDouble("conso_l100", 6.5).toFloat(),
         model = o.optString("modele", ""),
         toConfigure = o.optBoolean("a_configurer", false),
+        batteryFull = o.optDouble("batterie_pleine", if (o.optString("id") == DEFAULT_ID) SCENIC_FULL else 100.0).toFloat(),
     )
+
+    /** Relevé du 2026-10-31 : 79 % envoyé par Android Auto pour 82 % au tableau de bord. */
+    private const val SCENIC_FULL = 96.3
 }
