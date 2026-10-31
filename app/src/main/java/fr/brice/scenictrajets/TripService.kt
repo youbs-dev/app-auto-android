@@ -166,7 +166,7 @@ class TripService : Service() {
         // Retire le bouton « Reprendre » de la notification quand la proposition expire.
         if (TripRecorder.isActive) updateNotification()
         if (TripRecorder.isActive) {
-            if (TripRecorder.isAuto && !aaSeenDuringTrip && now - TripRecorder.startTime > AA_GRACE_MS) {
+            if (TripRecorder.isAuto && !TripRecorder.confirmed && !aaSeenDuringTrip && now - TripRecorder.startTime > AA_GRACE_MS) {
                 Log.i(TAG, "Pas d'Android Auto : trajet abandonné (pas dans le Scénic)")
                 TripRecorder.discard(this)
                 stopSelf()

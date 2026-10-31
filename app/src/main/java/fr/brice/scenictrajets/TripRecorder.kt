@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.Manifest
 import android.location.Location
+import android.util.Log
 import androidx.core.content.ContextCompat
 import java.io.File
 import java.text.SimpleDateFormat
@@ -59,6 +60,9 @@ object TripRecorder {
         private set
     @Volatile var distanceKm = 0.0
         private set
+    /** Trajet déjà confirmé (repris après un plantage ou à la demande) : pas de contrôle « dans la voiture ? ». */
+    @Volatile var confirmed = false
+        private set
     var startTime = 0L
         private set
 
@@ -110,7 +114,9 @@ object TripRecorder {
     @Synchronized
     fun begin(context: Context, auto: Boolean) {
         if (isActive) return
+        if (recoverAfterCrash(context, auto)) return
         isAuto = auto
+        confirmed = false
         startTime = System.currentTimeMillis()
         tripId = idFormat.format(Date(startTime))
         distanceKm = 0.0
@@ -125,7 +131,101 @@ object TripRecorder {
             startTime - it.end in 0..RESUME_GAP_MS && it.vehicleId == VehicleStore.currentId
         }
         isActive = true
+        saveActive(context)
         notifyListeners()
+    }
+
+    // --- Trajet en cours gardé sur le téléphone, pour survivre à un plantage ----------------------
+
+    private fun activePrefs(c: Context) = c.getSharedPreferences("trajet_en_cours", Context.MODE_PRIVATE)
+
+    private fun saveActive(c: Context) {
+        activePrefs(c).edit()
+            .putString("id", tripId).putLong("debut", startTime).putBoolean("auto", isAuto)
+            .putString("vehicule", VehicleStore.currentId)
+            .putFloat("batterie", batteryStart ?: -1f).putFloat("autonomie", rangeStart ?: -1f)
+            .putFloat("compteur", odometerStart ?: -1f)
+            .commit()
+    }
+
+    private fun clearActive(c: Context) { activePrefs(c).edit().clear().commit() }
+
+    /**
+     * Après un plantage, le trajet interrompu est repris tout seul s'il a reçu une position
+     * il y a moins de 10 min. Plus ancien, il est rangé dans l'historique tel quel.
+     */
+    private fun recoverAfterCrash(c: Context, auto: Boolean): Boolean {
+        val p = activePrefs(c)
+        val id = p.getString("id", null) ?: return false
+        val file = pointsFile(c, id)
+        val points = runCatching { readPoints(file) }.getOrDefault(emptyList())
+        val start = p.getLong("debut", 0L)
+        fun f(k: String) = p.getFloat(k, -1f).takeIf { it >= 0f }
+        val lastTime = points.lastOrNull()?.time ?: file.lastModified()
+        val now = System.currentTimeMillis()
+        if (!file.exists() || start == 0L) { clearActive(c); return false }
+
+        // Distance recalculée à partir des points déjà enregistrés.
+        var dist = 0.0
+        var prev: Location? = null
+        points.filter { it.accuracy <= 50f }.forEach { pt ->
+            val l = Location("fichier").apply { latitude = pt.lat; longitude = pt.lon }
+            prev?.let { dist += it.distanceTo(l) / 1000.0 }
+            prev = l
+        }
+
+        if (now - lastTime <= 10 * 60_000L) {
+            tripId = id
+            startTime = start
+            isAuto = p.getBoolean("auto", auto)
+            distanceKm = dist
+            speedKmh = null
+            maxSpeedKmh = 0f
+            lastLocation = prev
+            batteryStart = f("batterie") ?: CarSnapshot.batteryPercent
+            rangeStart = f("autonomie") ?: CarSnapshot.rangeKm
+            odometerStart = f("compteur") ?: CarSnapshot.odometerKm
+            resumeCandidate = null
+            confirmed = true
+            isActive = true
+            Log.i("ScenicTrajet", "Trajet $id repris après un plantage")
+            notifyListeners()
+            return true
+        }
+
+        // Trop ancien : on range le trajet interrompu dans l'historique, avec la fin connue.
+        clearActive(c)
+        if (dist >= 0.2) {
+            val summary = summaryFile(c)
+            if (!summary.exists()) summary.writeText(SUMMARY_HEADER + "\n")
+            val last = points.lastOrNull()
+            val trip = Trip(
+                id, start, lastTime, dist, f("batterie"), last?.battery, f("autonomie"), last?.range,
+                f("compteur"), null, p.getString("vehicule", null) ?: VehicleStore.currentId,
+            )
+            summary.appendText(toCsv(trip) + "\n")
+            runCatching { writeGpx(c, id) }
+        } else {
+            file.delete()
+        }
+        return false
+    }
+
+    private class SavedPoint(val time: Long, val lat: Double, val lon: Double, val accuracy: Float, val battery: Float?, val range: Float?)
+
+    private fun readPoints(f: File): List<SavedPoint> {
+        if (!f.exists()) return emptyList()
+        return f.readLines().drop(1).mapNotNull { l ->
+            val x = l.split(";")
+            if (x.size < 5) return@mapNotNull null
+            SavedPoint(
+                parseTime(x[0])?.time ?: return@mapNotNull null,
+                x[1].toDoubleOrNull() ?: return@mapNotNull null,
+                x[2].toDoubleOrNull() ?: return@mapNotNull null,
+                x[4].toFloatOrNull() ?: 999f,
+                x.getOrNull(5)?.toFloatOrNull(), x.getOrNull(6)?.toFloatOrNull(),
+            )
+        }
     }
 
     /**
@@ -154,6 +254,7 @@ object TripRecorder {
         if (!isActive) return
         isActive = false
         resumeCandidate = null
+        clearActive(context)
         lastFix?.let {
             context.getSharedPreferences("position", Context.MODE_PRIVATE).edit()
                 .putFloat("lat", it.latitude.toFloat()).putFloat("lon", it.longitude.toFloat()).apply()
@@ -219,6 +320,8 @@ object TripRecorder {
         batteryStart = prev.batteryStart ?: batteryStart
         rangeStart = prev.rangeStart ?: rangeStart
         odometerStart = prev.odometerStart ?: odometerStart
+        confirmed = true
+        saveActive(context)
         notifyListeners()
         return true
     }
@@ -234,6 +337,7 @@ object TripRecorder {
     fun discard(context: Context) {
         if (!isActive) return
         isActive = false
+        clearActive(context)
         pointsFile(context, tripId).delete()
         notifyListeners()
     }
