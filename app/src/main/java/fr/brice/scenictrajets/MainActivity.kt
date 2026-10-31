@@ -448,38 +448,23 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun TripCard(t: Trip, all: List<Trip>, configured: Boolean, showVehicle: Boolean, onClick: () -> Unit) {
-        val cmp = remember(t.id, all.size) { Routes.compare(this, t, all) }
-        val kind = remember(t.id, all.size) { Routes.kind(this, t) }
-        val cloud = when {
-            !configured -> null
-            TripRecorder.isSent(this, t.id) -> "☁️ envoyé"
-            else -> "⏳ à envoyer"
-        }
+        // Accueil allégé : heure, distance et batterie. Le reste (lieux, coût, météo, comparaison)
+        // est dans le détail du trajet, en le touchant.
+        val battery = if (t.batteryStart != null && t.batteryEnd != null) {
+            String.format(java.util.Locale.FRANCE, "🔋 %.0f %% → %.0f %%", t.batteryStart, t.batteryEnd)
+        } else "🔋 —"
         Card(
             onClick = onClick,
             shape = MaterialTheme.shapes.large,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         ) {
-            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row {
-                    Text(
-                        TripStats.hours(t) + if (showVehicle) " · " + t.vehicle.name else "",
-                        style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f),
-                    )
-                    cloud?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                }
-                val place = TripPlaces.label(this@MainActivity, t.id)
-                listOfNotNull(
-                    if (kind != Routes.Kind.OTHER) (if (kind == Routes.Kind.HOME_WORK) "🏠 → 🏢 " else "🏢 → 🏠 ") + kind.label else null,
-                    place.takeIf { kind == Routes.Kind.OTHER },
-                ).firstOrNull()?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
-                }
-                Text(TripStats.summaryWithWeather(this@MainActivity, t), style = MaterialTheme.typography.bodyLarge)
-                Text(TripStats.batteryAndCost(this@MainActivity, t), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                cmp?.let { c -> Routes.compareLine(t, c).takeIf { it.isNotEmpty() } }?.let {
-                    Text("⏱ $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(TripStats.hours(t), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text(TripStats.km(t.distanceKm), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(end = 12.dp))
+                Text(battery, style = MaterialTheme.typography.bodyLarge)
             }
         }
     }
