@@ -203,6 +203,18 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+                tripTick.let { TripRecorder.resumeOffer }?.let { prev ->
+                    item {
+                        StatusCard(
+                            Status(
+                                false, "Reprendre le trajet précédent ?",
+                                "Un trajet s'est arrêté à " + TripStats.clock(prev.end) + ", juste avant celui-ci. " +
+                                    "Tu peux les réunir en un seul trajet.",
+                                "Reprendre", { TripRecorder.resumePrevious(this@MainActivity); statusTick++ },
+                            )
+                        )
+                    }
+                }
                 if (active) item { CurrentTripCard(tripTick) }
                 if (vehicles.size > 1) {
                     item {

@@ -83,12 +83,27 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
             )
         }
         pane.addAction(tripAction())
-        pane.addAction(
-            Action.Builder()
-                .setTitle("Trajets")
-                .setOnClickListener { screenManager.push(TripsScreen(carContext)) }
-                .build()
-        )
+        if (TripRecorder.resumeOffer != null) {
+            // Juste après un arrêt de quelques instants : continuer le trajet précédent.
+            pane.addAction(
+                Action.Builder()
+                    .setTitle("Reprendre")
+                    .setOnClickListener {
+                        if (TripRecorder.resumePrevious(carContext)) {
+                            CarToast.makeText(carContext, "Trajet précédent repris", CarToast.LENGTH_SHORT).show()
+                        }
+                        invalidate()
+                    }
+                    .build()
+            )
+        } else {
+            pane.addAction(
+                Action.Builder()
+                    .setTitle("Trajets")
+                    .setOnClickListener { screenManager.push(TripsScreen(carContext)) }
+                    .build()
+            )
+        }
 
         return PaneTemplate.Builder(pane.build())
             .setTitle("Scénic Trajets")
@@ -124,7 +139,8 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
             .setTitle("🔴 " + TripStats.km(live.distanceKm) + " · " + TripStats.duration(live.durationMin))
             .addText(TripStats.liveSpeed(live))
             .addText(
-                listOfNotNull(
+                TripRecorder.resumeOffer?.let { "Arrêté à " + TripStats.clock(it.end) + " : touche Reprendre pour continuer ce trajet" }
+                    ?: listOfNotNull(
                     TripPlaces.liveStart?.let { "Départ : $it" },
                     TripWeather.liveTemp?.let { TripWeather.label(it) },
                 ).joinToString(" · ").ifEmpty {

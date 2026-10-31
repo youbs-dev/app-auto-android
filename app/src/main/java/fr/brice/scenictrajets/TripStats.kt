@@ -34,6 +34,8 @@ object TripStats {
 
     fun duration(min: Long) = if (min < 60) "$min min" else String.format(Locale.FRANCE, "%d h %02d", min / 60, min % 60)
 
+    /** « 14:32 ». */
+    fun clock(time: Long): String = hour.format(Date(time))
     fun hours(t: Trip) = hour.format(Date(t.start)) + " → " + hour.format(Date(t.end))
 
     fun shortDate(t: Trip) = shortDay.format(Date(t.start)).replaceFirstChar { it.uppercase() }

@@ -81,6 +81,16 @@ object TripRecorder {
     private var odometerStart: Float? = null
     private val listeners = mutableSetOf<() -> Unit>()
 
+    /** Un nouveau trajet qui commence moins de 5 min après le précédent peut le continuer. */
+    private const val RESUME_GAP_MS = 5 * 60_000L
+    /** La proposition de reprise reste affichée pendant les 10 premières minutes du nouveau trajet. */
+    private const val RESUME_OFFER_MS = 10 * 60_000L
+    @Volatile private var resumeCandidate: Trip? = null
+
+    /** Trajet précédent que l'on peut reprendre, ou null. */
+    val resumeOffer: Trip?
+        get() = resumeCandidate?.takeIf { isActive && System.currentTimeMillis() - startTime < RESUME_OFFER_MS }
+
     fun hasLocationPermission(context: Context) =
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
@@ -111,6 +121,9 @@ object TripRecorder {
         rangeStart = CarSnapshot.rangeKm
         odometerStart = CarSnapshot.odometerKm
         pointsFile(context, tripId).writeText(POINTS_HEADER + "\n")
+        resumeCandidate = runCatching { trips(context).firstOrNull() }.getOrNull()?.takeIf {
+            startTime - it.end in 0..RESUME_GAP_MS && it.vehicleId == VehicleStore.currentId
+        }
         isActive = true
         notifyListeners()
     }
@@ -140,6 +153,7 @@ object TripRecorder {
     fun finish(context: Context) {
         if (!isActive) return
         isActive = false
+        resumeCandidate = null
         lastFix?.let {
             context.getSharedPreferences("position", Context.MODE_PRIVATE).edit()
                 .putFloat("lat", it.latitude.toFloat()).putFloat("lon", it.longitude.toFloat()).apply()
@@ -168,6 +182,51 @@ object TripRecorder {
         Routes.computeMissingSoon(context)
         TripWeather.resolveMissingSoon(context)
         notifyListeners()
+    }
+
+    /**
+     * Continue le trajet précédent au lieu d'en créer un nouveau : les points déjà enregistrés
+     * sont ajoutés à ceux du trajet précédent, qui retrouve son heure et sa batterie de départ.
+     */
+    @Synchronized
+    fun resumePrevious(context: Context): Boolean {
+        val prev = resumeOffer ?: return false
+        resumeCandidate = null
+        val current = pointsFile(context, tripId)
+        val target = pointsFile(context, prev.id)
+        val newPoints = current.takeIf { it.exists() }?.readLines()?.drop(1)?.filter { it.isNotBlank() }.orEmpty()
+        if (!target.exists()) target.writeText(POINTS_HEADER + "\n")
+        if (newPoints.isNotEmpty()) target.appendText(newPoints.joinToString("\n") + "\n")
+        current.delete()
+
+        // Le trajet précédent sort de l'historique : il y reviendra, complet, à la fin.
+        val summary = summaryFile(context)
+        if (summary.exists()) {
+            val kept = trips(context).reversed().filter { it.id != prev.id }
+            summary.writeText(SUMMARY_HEADER + "\n" + kept.joinToString("") { toCsv(it) + "\n" })
+        }
+        // Ce qui dépend de la fin du trajet sera recalculé : GPX, lieu d'arrivée, extrémités, envoi Dawarich.
+        gpxFile(context, prev.id).delete()
+        forgetId(File(dir(context), "lieux.csv"), prev.id)
+        forgetId(File(dir(context), "extremites.csv"), prev.id)
+        sentFile(context).takeIf { it.exists() }?.let { f ->
+            f.writeText(f.readLines().filter { it.isNotBlank() && it != prev.id }.joinToString("") { it + "\n" })
+        }
+
+        tripId = prev.id
+        startTime = prev.start
+        distanceKm += prev.distanceKm
+        batteryStart = prev.batteryStart ?: batteryStart
+        rangeStart = prev.rangeStart ?: rangeStart
+        odometerStart = prev.odometerStart ?: odometerStart
+        notifyListeners()
+        return true
+    }
+
+    /** Retire d'un fichier « id;… » les lignes d'un trajet. */
+    private fun forgetId(f: File, id: String) {
+        if (!f.exists()) return
+        f.writeText(f.readLines().filter { it.isNotBlank() && !it.startsWith("$id;") }.joinToString("") { it + "\n" })
     }
 
     /** Abandonne le trajet en cours sans l'enregistrer (par exemple : pas dans le Scénic). */
