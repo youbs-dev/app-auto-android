@@ -458,13 +458,15 @@ class MainActivity : ComponentActivity() {
             shape = MaterialTheme.shapes.large,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         ) {
-            Row(
+            Column(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text(TripStats.hours(t), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                Text(TripStats.km(t.distanceKm), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(end = 12.dp))
-                Text(battery, style = MaterialTheme.typography.bodyLarge)
+                Text("🕒 " + TripStats.hours(t), style = MaterialTheme.typography.titleMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    Text("🛣️ " + TripStats.km(t.distanceKm), style = MaterialTheme.typography.bodyLarge)
+                    Text(battery, style = MaterialTheme.typography.bodyLarge)
+                }
             }
         }
     }
