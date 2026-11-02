@@ -279,6 +279,11 @@ class MainActivity : ComponentActivity() {
                         }
                         Text(TripStats.summaryWithWeather(this@MainActivity, t))
                         Text(TripStats.batteryAndCost(this@MainActivity, t))
+                        // Contrôle de la distance GPS avec le compteur de la voiture (précis au km près).
+                        val odo = t.odometerStart?.let { a -> t.odometerEnd?.let { b -> b - a } }
+                        if (odo != null && odo >= 1f) {
+                            Text(String.format(java.util.Locale.FRANCE, "Compteur de la voiture : %.0f km (GPS : %s)", odo, TripStats.km(t.distanceKm)))
+                        }
                         Spacer(Modifier.height(8.dp))
                         TextButton(onClick = {
                             selected = null

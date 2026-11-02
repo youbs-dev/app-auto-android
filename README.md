@@ -1,27 +1,21 @@
-# Scénic Trajets : étape 1 (app de test)
+# Scénic Trajets
 
-Cette petite app Android Auto affiche en direct ce que le Scénic transmet : le modèle, la batterie, l'autonomie, la vitesse et le kilométrage. Chaque ligne affiche soit la valeur, soit la raison de son absence (« non transmis par la voiture », « indisponible pour l'instant », « permission refusée »).
+App Android Auto (sur le téléphone) qui enregistre les trajets du Scénic E-Tech : parcours GPS, batterie et autonomie lues dans la voiture, consommation, coût, recharges, et envoi vers Dawarich.
 
-## Installation (une seule fois)
+## Ce que fait l'app
 
-1. Installe [Android Studio](https://developer.android.com/studio) sur ton ordinateur, puis ouvre ce dossier `scenic-trajets` (*File > Open*). Laisse Android Studio télécharger ce qui manque.
-2. Sur le téléphone, active le **mode développeur Android** : *Paramètres > À propos > Numéro de build*, à toucher 7 fois. Active ensuite **Débogage USB**.
-3. Active le **mode développeur d'Android Auto** : *Paramètres > Appareils connectés > Android Auto*, puis touche « Version » 10 fois. Dans le menu ⋮, ouvre *Paramètres pour les développeurs* et coche **Sources inconnues**.
-4. Branche le téléphone en USB et clique sur ▶ *Run* dans Android Studio. L'app n'a pas d'écran sur le téléphone, c'est normal.
+- **Dans la voiture** : trajet en cours en direct, batterie, total du jour, bouton Démarrer / Arrêter, derniers trajets, bornes de recharge proches, écran Diagnostic.
+- **Sur le téléphone** : historique par jour, détail et carte de chaque trajet, bilan du mois, journal des recharges, réglages (prix du kWh, véhicules, Dawarich, conservation).
+- **Trajets automatiques** : l'app détecte la conduite et démarre seule ; le trajet se termine quand Android Auto se déconnecte ou après 10 min à l'arrêt.
+- **Export** : CSV (tableur) et GPX (Dawarich), envoi direct à Dawarich dès qu'Internet est disponible.
 
-## Test dans la voiture
+## Compilation et publication
 
-1. Connecte le téléphone au Scénic et lance Android Auto.
-2. Ouvre le lanceur d'apps et choisis **Scénic Trajets (test)**.
-3. Si la ligne « Permissions » indique des permissions manquantes, touche-la pour les accorder.
-4. Roule quelques minutes, puis prends l'écran en photo à l'arrêt.
+- Chaque envoi sur GitHub lance la compilation (GitHub Actions) : APK de debug et bundle Google Play signé.
+- Un message de commit contenant `[publier]` (ou une étiquette `publier-…`) publie le bundle sur le canal **Tests internes** de Google Play. Augmenter `versionCode` avant.
+- Android Auto n'accepte les apps à templates que si elles viennent du Play Store : on teste dans la voiture via Tests internes.
 
-## Ce que le résultat nous dira
+## Versions récentes
 
-| Ce que tu vois | Ce que ça veut dire pour la suite |
-|---|---|
-| Batterie et kilométrage affichent des valeurs | Tout peut venir directement de la voiture |
-| « non transmis par la voiture » | Il faudra passer par l'API My Renault ou un dongle OBD2 |
-| Vitesse seule | Le GPS du téléphone suffit pour la distance, la batterie viendra d'ailleurs |
-
-Les valeurs sont aussi écrites dans le journal Android (Logcat dans Android Studio, filtre `ScenicTest`).
+- **0.26** : fin d'un trajet terminé à l'arrêt corrigée (plus 10 min en trop), distance sans la dérive du GPS à l'arrêt, compteur de la voiture en contrôle, GPS plus économe (lent en attente et à l'arrêt, coupé 2 min après la déconnexion d'Android Auto), notification avec km, durée, batterie et bouton Arrêter.
+- **0.25** : correction de la batterie par véhicule, accueil du téléphone allégé.

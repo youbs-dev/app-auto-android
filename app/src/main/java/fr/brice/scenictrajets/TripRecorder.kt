@@ -74,8 +74,11 @@ object TripRecorder {
         private set
     @Volatile var maxSpeedKmh = 0f
         private set
-    /** Dernière fois que la voiture roulait (mis à jour par TripService). */
+    /** Dernière fois que la voiture roulait (mis à jour à chaque position « en mouvement »). */
     @Volatile var lastMovingAt = 0L
+        private set
+    /** Distance parcourue au dernier moment où la voiture roulait (fin d'un trajet terminé à l'arrêt). */
+    private var distanceAtLastMove = 0.0
 
     private var tripId = ""
     /** Dernière position GPS connue, même hors trajet (pour situer les recharges). */
@@ -123,6 +126,8 @@ object TripRecorder {
         startTime = System.currentTimeMillis()
         tripId = idFormat.format(Date(startTime))
         distanceKm = 0.0
+        distanceAtLastMove = 0.0
+        lastMovingAt = startTime
         speedKmh = null
         maxSpeedKmh = 0f
         lastLocation = null
@@ -168,13 +173,20 @@ object TripRecorder {
         val now = System.currentTimeMillis()
         if (!file.exists() || start == 0L) { clearActive(c); return false }
 
-        // Distance recalculée à partir des points déjà enregistrés.
+        // Distance recalculée à partir des points déjà enregistrés (même filtre qu'en direct).
         var dist = 0.0
         var prev: Location? = null
         points.filter { it.accuracy <= 50f }.forEach { pt ->
-            val l = Location("fichier").apply { latitude = pt.lat; longitude = pt.lon }
-            prev?.let { dist += it.distanceTo(l) / 1000.0 }
-            prev = l
+            val l = Location("fichier").apply {
+                latitude = pt.lat; longitude = pt.lon; accuracy = pt.accuracy
+                pt.speedMs?.let { speed = it }
+            }
+            val p0 = prev
+            if (p0 == null) prev = l
+            else {
+                val d = p0.distanceTo(l)
+                if (countsAsMove(d, l)) { dist += d / 1000.0; prev = l }
+            }
         }
 
         if (now - lastTime <= 10 * 60_000L) {
@@ -182,6 +194,8 @@ object TripRecorder {
             startTime = start
             isAuto = p.getBoolean("auto", auto)
             distanceKm = dist
+            distanceAtLastMove = dist
+            lastMovingAt = now
             speedKmh = null
             maxSpeedKmh = 0f
             lastLocation = prev
@@ -214,7 +228,10 @@ object TripRecorder {
         return false
     }
 
-    private class SavedPoint(val time: Long, val lat: Double, val lon: Double, val accuracy: Float, val battery: Float?, val range: Float?)
+    private class SavedPoint(
+        val time: Long, val lat: Double, val lon: Double, val accuracy: Float,
+        val battery: Float?, val range: Float?, val speedMs: Float?,
+    )
 
     private fun readPoints(f: File): List<SavedPoint> {
         if (!f.exists()) return emptyList()
@@ -227,6 +244,7 @@ object TripRecorder {
                 x[2].toDoubleOrNull() ?: return@mapNotNull null,
                 x[4].toFloatOrNull() ?: 999f,
                 x.getOrNull(5)?.toFloatOrNull(), x.getOrNull(6)?.toFloatOrNull(),
+                x[3].toFloatOrNull()?.div(3.6f),
             )
         }
     }
@@ -251,10 +269,20 @@ object TripRecorder {
         return p.getFloat("lat", 0f).toDouble() to p.getFloat("lon", 0f).toDouble()
     }
 
-    /** Termine le trajet en cours et l'ajoute à l'historique (les trajets de moins de 200 m sont ignorés). */
+    /**
+     * Termine le trajet en cours et l'ajoute à l'historique (les trajets de moins de 200 m sont ignorés).
+     * [atLastMove] : le trajet se termine parce que la voiture est restée arrêtée longtemps ; la fin
+     * enregistrée est alors le dernier moment où elle roulait, et les points pris à l'arrêt sont retirés.
+     */
     @Synchronized
-    fun finish(context: Context) {
+    fun finish(context: Context, atLastMove: Boolean = false) {
         if (!isActive) return
+        var end = System.currentTimeMillis()
+        if (atLastMove && lastMovingAt in startTime until end) {
+            end = lastMovingAt
+            distanceKm = distanceAtLastMove
+            runCatching { trimPointsAfter(context, end) }
+        }
         isActive = false
         resumeCandidate = null
         clearActive(context)
@@ -270,7 +298,7 @@ object TripRecorder {
         val summary = summaryFile(context)
         if (!summary.exists()) summary.writeText(SUMMARY_HEADER + "\n")
         val trip = Trip(
-            tripId, startTime, System.currentTimeMillis(), distanceKm,
+            tripId, startTime, end, distanceKm,
             batteryStart, CarSnapshot.batteryPercent, rangeStart, CarSnapshot.rangeKm,
             odometerStart, CarSnapshot.odometerKm,
             // Le véhicule est connu dès qu'Android Auto a donné le modèle de la voiture.
@@ -287,6 +315,27 @@ object TripRecorder {
         TripWeather.resolveMissingSoon(context)
         notifyListeners()
     }
+
+    /** Retire du fichier de points ceux pris après [end] (voiture garée). */
+    private fun trimPointsAfter(context: Context, end: Long) {
+        val f = pointsFile(context, tripId)
+        if (!f.exists()) return
+        val lines = f.readLines()
+        val kept = lines.take(1) + lines.drop(1).filter { l ->
+            if (l.isBlank()) return@filter false
+            val t = runCatching { parseTime(l.substringBefore(";"))?.time }.getOrNull() ?: return@filter true
+            t <= end + 2_000L
+        }
+        if (kept.size != lines.size) f.writeText(kept.joinToString("") { it + "\n" })
+    }
+
+    /**
+     * Un écart entre deux positions ne compte dans la distance que si la voiture bouge vraiment :
+     * vitesse GPS d'au moins 1 m/s, ou déplacement plus grand que l'imprécision du GPS.
+     * Sinon c'est la dérive du GPS à l'arrêt (feu rouge, bouchon), qu'on ignore.
+     */
+    private fun countsAsMove(meters: Float, loc: Location): Boolean =
+        (loc.hasSpeed() && loc.speed >= 1f) || meters > maxOf(loc.accuracy, 15f)
 
     /**
      * Continue le trajet précédent au lieu d'en créer un nouveau : les points déjà enregistrés
@@ -320,6 +369,7 @@ object TripRecorder {
         tripId = prev.id
         startTime = prev.start
         distanceKm += prev.distanceKm
+        distanceAtLastMove += prev.distanceKm
         batteryStart = prev.batteryStart ?: batteryStart
         rangeStart = prev.rangeStart ?: rangeStart
         odometerStart = prev.odometerStart ?: odometerStart
@@ -392,10 +442,11 @@ object TripRecorder {
         gpxFile(context, id).writeText(sb.toString())
     }
 
-    /** Appelé par TripService à chaque nouvelle position GPS. */
+    /** Appelé par TripService à chaque nouvelle position GPS ; [moving] : la voiture roule. */
     @Synchronized
-    fun onLocation(context: Context, loc: Location) {
+    fun onLocation(context: Context, loc: Location, moving: Boolean) {
         if (loc.accuracy <= 50f) lastFix = loc
+        if (moving) lastMovingAt = System.currentTimeMillis()
         if (!isActive) return
         speedKmh = if (loc.hasSpeed()) loc.speed * 3.6f else null
         speedKmh?.let { if (loc.accuracy <= 30f && it > maxSpeedKmh) maxSpeedKmh = it }
@@ -405,9 +456,15 @@ object TripRecorder {
                 TripPlaces.onTripStart(context, startTime, loc.latitude, loc.longitude)
                 TripWeather.onTripStart(startTime, loc.latitude, loc.longitude)
             }
-            lastLocation?.let { distanceKm += it.distanceTo(loc) / 1000.0 }
-            lastLocation = loc
+            val prev = lastLocation
+            if (prev == null) lastLocation = loc
+            else {
+                val d = prev.distanceTo(loc)
+                // À l'arrêt, on garde le point de référence : la dérive du GPS ne s'additionne pas.
+                if (countsAsMove(d, loc)) { distanceKm += d / 1000.0; lastLocation = loc }
+            }
         }
+        if (moving) distanceAtLastMove = distanceKm
         val line = listOf(
             dateFormat.format(Date(loc.time)),
             "%.6f".format(Locale.US, loc.latitude),
