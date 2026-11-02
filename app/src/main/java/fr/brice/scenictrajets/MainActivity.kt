@@ -1,0 +1,646 @@
+package fr.brice.scenictrajets
+
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LargeTopAppBar
+import androidx.compose.material3.LinearWavyProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
+import java.io.File
+import java.util.Locale
+
+private const val MAX_TRIPS_SHOWN = 60
+
+/** Ce que le bandeau d'état doit dire, et le seul bouton utile. */
+private data class Status(
+    val ok: Boolean,
+    val title: String,
+    val text: String,
+    val button: String? = null,
+    val action: () -> Unit = {},
+    val showAppSettings: Boolean = false,
+)
+
+/**
+ * Écran du téléphone : l'état de l'app en un coup d'œil, puis l'historique des trajets.
+ * Les réglages (thème, trajets automatiques, Dawarich, conservation) sont dans [SettingsActivity].
+ */
+class MainActivity : ComponentActivity() {
+
+    /** Change à chaque position GPS ou à chaque retour sur l'écran : Compose redessine. */
+    private var tripTick by mutableIntStateOf(0)
+    private var statusTick by mutableIntStateOf(0)
+    /** Résultat d'un envoi manuel vers Dawarich, affiché en entier dans une fenêtre. */
+    private var pushResult by mutableStateOf<PushResult?>(null)
+    /** Véhicule affiché (null = tous). */
+    private var vehicleFilter by mutableStateOf<String?>(null)
+    private val vehicleListener: () -> Unit = { runOnUiThread { statusTick++ } }
+
+    private class PushResult(val trip: Trip, val ok: Boolean, val message: String, val suggestedUrl: String? = null)
+    private val tripListener: () -> Unit = { runOnUiThread { tripTick++ } }
+    private val chargeListener: () -> Unit = { runOnUiThread { statusTick++ } }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        CrashLog.install(this)
+        VehicleStore.init(this)
+        setContent { ScenicTheme { HomeContent() } }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        statusTick++
+        tripTick++
+        TripRecorder.addListener(tripListener)
+        ChargeLog.addListener(chargeListener)
+        VehicleStore.addListener(vehicleListener)
+        SyncWorker.schedule(this)
+        TripPlaces.resolveMissingSoon(this)
+        Routes.computeMissingSoon(this)
+        TripWeather.resolveMissingSoon(this)
+        // Enregistre (ou ré-enregistre) la détection de conduite dès que les autorisations le permettent.
+        DrivingDetector.register(this)
+    }
+
+    override fun onPause() {
+        TripRecorder.removeListener(tripListener)
+        ChargeLog.removeListener(chargeListener)
+        VehicleStore.removeListener(vehicleListener)
+        super.onPause()
+    }
+
+    /** Après la fenêtre d'autorisation d'Android : on remet le bandeau à jour. */
+    private val permissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            statusTick++
+            DrivingDetector.register(this)
+        }
+
+    // --- Écran ------------------------------------------------------------------------------
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    private fun HomeContent() {
+        val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+        var menu by remember { mutableStateOf(false) }
+        var selected by remember { mutableStateOf<Trip?>(null) }
+
+        // On ne relit l'historique que quand un trajet commence ou finit (pas à chaque position GPS).
+        val active = tripTick.let { TripRecorder.isActive }
+        val allTrips = remember(active, statusTick) { TripRecorder.trips(this) }
+        val vehicles = remember(statusTick) { VehicleStore.vehicles }
+        val filter = vehicleFilter?.takeIf { id -> vehicles.any { it.id == id } }
+        val trips = remember(allTrips, filter) { allTrips.filter { filter == null || it.vehicleId == filter } }
+        val status = remember(statusTick) { computeStatus() }
+        val configured = remember(statusTick) { SyncSettings.isConfigured(this) }
+
+        Scaffold(
+            modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
+            topBar = {
+                LargeTopAppBar(
+                    title = { Text("Scénic Trajets") },
+                    scrollBehavior = scroll,
+                    actions = {
+                        IconButton(onClick = { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Réglages")
+                        }
+                        IconButton(onClick = { menu = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "Plus")
+                        }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Bilan du mois et recharges") },
+                                onClick = { menu = false; openBilan() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Exporter tout (GPX, Dawarich)") },
+                                onClick = { menu = false; exportAll("gpx", "*/*") },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Exporter tout (CSV, tableur)") },
+                                onClick = { menu = false; exportAll("csv", "text/csv") },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Ouvrir Android Auto") },
+                                onClick = { menu = false; openAndroidAuto(this@MainActivity) },
+                            )
+                        }
+                    },
+                )
+            },
+        ) { padding ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 16.dp, end = 16.dp,
+                    top = padding.calculateTopPadding() + 4.dp,
+                    bottom = padding.calculateBottomPadding() + 24.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                item { StatusCard(status) }
+                vehicles.firstOrNull { it.toConfigure }?.let { v ->
+                    item {
+                        StatusCard(
+                            Status(
+                                false, "Nouveau véhicule : ${v.name}",
+                                "Android Auto a reconnu une nouvelle voiture. Donne-lui un nom et indique la capacité de sa batterie, pour que la conso et les coûts soient justes.",
+                                "Régler ce véhicule", { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) },
+                            )
+                        )
+                    }
+                }
+                tripTick.let { TripRecorder.resumeOffer }?.let { prev ->
+                    item {
+                        StatusCard(
+                            Status(
+                                false, "Reprendre le trajet précédent ?",
+                                "Un trajet s'est arrêté à " + TripStats.clock(prev.end) + ", juste avant celui-ci. " +
+                                    "Tu peux les réunir en un seul trajet.",
+                                "Reprendre", { TripRecorder.resumePrevious(this@MainActivity); statusTick++ },
+                            )
+                        )
+                    }
+                }
+                if (active) item { CurrentTripCard(tripTick) }
+                if (vehicles.size > 1) {
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                            FilterChip(selected = filter == null, onClick = { vehicleFilter = null }, label = { Text("Tous") })
+                            vehicles.forEach { v ->
+                                FilterChip(selected = filter == v.id, onClick = { vehicleFilter = v.id }, label = { Text(v.name) })
+                            }
+                        }
+                    }
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        StatCard("Cette semaine", trips, TripStats.startOfWeek(), Modifier.weight(1f), weekly = true)
+                        StatCard("Ce mois", trips, TripStats.startOfMonth(), Modifier.weight(1f), weekly = false)
+                    }
+                }
+                if (trips.isEmpty()) {
+                    item { SectionTitle("Historique") }
+                    item {
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+                            Text(
+                                "Aucun trajet pour l'instant. Ils apparaîtront ici après chaque trajet de plus de 200 m.",
+                                modifier = Modifier.padding(20.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                val shown = trips.take(MAX_TRIPS_SHOWN)
+                shown.groupBy { TripStats.dayLabel(it.start) }.forEach { (day, dayTrips) ->
+                    item(key = "jour-$day") { SectionTitle(day) }
+                    items(dayTrips, key = { it.id }) { t -> TripCard(t, allTrips, configured, vehicles.size > 1) { selected = t } }
+                }
+                if (trips.size > MAX_TRIPS_SHOWN) {
+                    item {
+                        Text(
+                            "Les trajets plus anciens sont dans l'export CSV (menu ⋮).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
+        pushResult?.let { r -> PushResultDialog(r) }
+
+        selected?.let { t ->
+            AlertDialog(
+                onDismissRequest = { selected = null },
+                title = { Text(TripStats.shortDate(t) + " · " + TripStats.hours(t)) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TripPlaces.of(this@MainActivity, t.id)?.let { p ->
+                            Text("Départ : " + p.start)
+                            Text("Arrivée : " + p.end)
+                        }
+                        if (vehicles.size > 1) VehiclePicker(t) { selected = null }
+                        Routes.compare(this@MainActivity, t, allTrips)?.let { c ->
+                            Text("Par rapport aux ${c.similar} autres trajets sur ce parcours : " + Routes.compareLine(t, c))
+                        }
+                        Text(TripStats.summaryWithWeather(this@MainActivity, t))
+                        Text(TripStats.batteryAndCost(this@MainActivity, t))
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = {
+                            selected = null
+                            startActivity(Intent(this@MainActivity, TripMapActivity::class.java).putExtra(TripMapActivity.EXTRA_ID, t.id))
+                        }) {
+                            Text("Voir la carte du trajet")
+                        }
+                        if (configured) {
+                            val sent = TripRecorder.isSent(this@MainActivity, t.id)
+                            TextButton(onClick = { selected = null; pushToDawarich(t) }) {
+                                Text(if (sent) "Renvoyer à Dawarich" else "Envoyer à Dawarich maintenant")
+                            }
+                        }
+                        TextButton(onClick = { selected = null; share(listOf(TripRecorder.gpxFile(this@MainActivity, t.id)), "*/*") }) {
+                            Text("Partager le parcours (GPX)")
+                        }
+                        TextButton(onClick = { selected = null; share(listOf(TripRecorder.pointsFile(this@MainActivity, t.id)), "text/csv") }) {
+                            Text("Partager les points (CSV)")
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { selected = null }) { Text("Fermer") } },
+            )
+        }
+    }
+
+    @Composable
+    private fun StatusCard(s: Status) {
+        val scheme = MaterialTheme.colorScheme
+        Card(
+            shape = MaterialTheme.shapes.extraLarge,
+            colors = CardDefaults.cardColors(
+                containerColor = if (s.ok) scheme.primaryContainer else scheme.tertiaryContainer,
+                contentColor = if (s.ok) scheme.onPrimaryContainer else scheme.onTertiaryContainer,
+            ),
+        ) {
+            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(s.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Text(s.text, style = MaterialTheme.typography.bodyMedium)
+                s.button?.let {
+                    Button(onClick = s.action, modifier = Modifier.fillMaxWidth()) { Text(it) }
+                }
+                if (s.showAppSettings) {
+                    TextButton(onClick = { openAppSettings() }) { Text("Ouvrir les autorisations de l'app") }
+                }
+            }
+        }
+    }
+
+    /** Trajet en cours, mis à jour à chaque position GPS : vitesse, distance, batterie, coût. */
+    @OptIn(ExperimentalMaterial3ExpressiveApi::class)
+    @Composable
+    private fun CurrentTripCard(@Suppress("UNUSED_PARAMETER") tick: Int) {
+        val scheme = MaterialTheme.colorScheme
+        val live = TripStats.live(this)
+        Card(
+            shape = MaterialTheme.shapes.extraLarge,
+            colors = CardDefaults.cardColors(containerColor = scheme.secondaryContainer, contentColor = scheme.onSecondaryContainer),
+        ) {
+            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    if (TripRecorder.isAuto) "Trajet en cours (automatique)" else "Trajet en cours",
+                    style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                )
+                listOfNotNull(
+                    TripPlaces.liveStart?.let { "Départ : $it" },
+                    TripWeather.liveTemp?.let { "Dehors : " + TripWeather.label(it) },
+                ).takeIf { it.isNotEmpty() }?.let { Text(it.joinToString(" · "), style = MaterialTheme.typography.bodyMedium) }
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        live.speedKmh?.let { String.format(Locale.FRANCE, "%.0f", it) } ?: "–",
+                        style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Bold,
+                    )
+                    Text(" km/h", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 10.dp))
+                }
+                Text(
+                    listOfNotNull(
+                        live.avgKmh?.let { "moyenne " + TripStats.kmh(it) },
+                        live.maxKmh.takeIf { it > 0 }?.let { "max " + TripStats.kmh(it) },
+                    ).joinToString(" · ").ifEmpty { "Vitesse mesurée par le GPS" },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LiveTile("Distance", TripStats.km(live.distanceKm), Modifier.weight(1f))
+                    LiveTile("Durée", TripStats.duration(live.durationMin), Modifier.weight(1f))
+                    LiveTile("Coût", live.cost?.let { TripStats.euros(it) } ?: "–", Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LiveTile(
+                        "Batterie",
+                        live.batteryNow?.let { n ->
+                            live.batteryStart?.let { String.format(Locale.FRANCE, "%.0f → %.0f %%", it, n) }
+                                ?: String.format(Locale.FRANCE, "%.0f %%", n)
+                        } ?: "–",
+                        Modifier.weight(1f),
+                    )
+                    LiveTile("Énergie", live.kwh?.let { String.format(Locale.FRANCE, "%.1f kWh", it) } ?: "–", Modifier.weight(1f))
+                    LiveTile("kWh/100 km", live.kwhPer100?.let { String.format(Locale.FRANCE, "%.1f", it) } ?: "–", Modifier.weight(1f))
+                }
+                live.rangeKm?.let {
+                    Text(String.format(Locale.FRANCE, "Autonomie restante : %.0f km", it), style = MaterialTheme.typography.bodyMedium)
+                }
+                if (live.batteryNow == null) {
+                    Text(
+                        "La batterie s'affiche quand Scénic Trajets est ouvert sur l'écran de la voiture.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                LinearWavyProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+
+    @Composable
+    private fun LiveTile(label: String, value: String, modifier: Modifier) {
+        Card(
+            modifier = modifier,
+            shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+        ) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            }
+        }
+    }
+
+    @Composable
+    private fun StatCard(label: String, trips: List<Trip>, since: Long, modifier: Modifier, weekly: Boolean) {
+        val list = trips.filter { it.start >= since }
+        val km = list.sumOf { it.distanceKm }
+        val kwh = list.mapNotNull { TripStats.kwh(it) }.sum()
+        val cost = list.mapNotNull { PriceSettings.tripCost(this, it) }.sum()
+        Card(
+            onClick = { openBilan(weekly) },
+            modifier = modifier,
+            shape = MaterialTheme.shapes.extraLarge,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            Column(Modifier.padding(18.dp)) {
+                Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    String.format(Locale.FRANCE, "%.0f km", km),
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    (if (list.size == 1) "1 trajet" else "${list.size} trajets") +
+                        (if (kwh > 0) String.format(Locale.FRANCE, " · %.0f kWh", kwh) else "") +
+                        (if (cost > 0) " · " + TripStats.euros(cost) else ""),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun SectionTitle(text: String) {
+        Text(
+            text,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 8.dp, top = 12.dp),
+        )
+    }
+
+    @Composable
+    private fun TripCard(t: Trip, all: List<Trip>, configured: Boolean, showVehicle: Boolean, onClick: () -> Unit) {
+        // Accueil allégé : heure, distance et batterie. Le reste (lieux, coût, météo, comparaison)
+        // est dans le détail du trajet, en le touchant.
+        val battery = if (t.batteryStart != null && t.batteryEnd != null) {
+            String.format(java.util.Locale.FRANCE, "🔋 %.0f %% → %.0f %%", t.batteryStart, t.batteryEnd)
+        } else "🔋 —"
+        Card(
+            onClick = onClick,
+            shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("🕒 " + TripStats.hours(t), style = MaterialTheme.typography.titleMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    Text("🛣️ " + TripStats.km(t.distanceKm), style = MaterialTheme.typography.bodyLarge)
+                    Text(battery, style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+    }
+
+    // --- État : une seule chose à faire à la fois -------------------------------------------
+
+    private fun neededPermissions(): List<String> {
+        val all = CAR_PERMISSIONS.toMutableList()
+        all += Manifest.permission.ACCESS_FINE_LOCATION
+        all += Manifest.permission.ACCESS_COARSE_LOCATION
+        if (Build.VERSION.SDK_INT >= 29) all += Manifest.permission.ACTIVITY_RECOGNITION
+        if (Build.VERSION.SDK_INT >= 33) all += Manifest.permission.POST_NOTIFICATIONS
+        return all
+    }
+
+    private fun computeStatus(): Status {
+        val missing = neededPermissions().filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        val auto = DrivingDetector.isEnabled(this)
+        val background = DrivingDetector.hasBackgroundLocation(this)
+        val syncError = if (SyncSettings.isConfigured(this)) TripRecorder.lastError(this) else null
+        return when {
+            missing.isNotEmpty() -> Status(
+                false, "Il manque des autorisations",
+                "L'app doit pouvoir lire la batterie de la voiture et enregistrer le parcours GPS.",
+                "Autoriser l'accès", { permissionLauncher.launch(missing.toTypedArray()) },
+                showAppSettings = true,
+            )
+            auto && !background && Build.VERSION.SDK_INT >= 29 -> Status(
+                false, "Encore une étape",
+                "Pour démarrer les trajets tout seuls, choisis « Toujours autoriser » pour la localisation.",
+                "Autoriser la localisation « Toujours »",
+                { permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) },
+            )
+            syncError != null -> Status(
+                false, "Envoi vers Dawarich en échec",
+                "$syncError\nLes trajets restent sur le téléphone et repartiront tout seuls.",
+                "Voir les réglages Dawarich", { startActivity(Intent(this, SettingsActivity::class.java)) },
+            )
+            else -> Status(
+                true, "Tout est prêt",
+                if (auto) "Les trajets s'enregistrent tout seuls dès que tu roules avec Android Auto."
+                else "Démarre un trajet depuis l'écran du Scénic (trajets automatiques désactivés dans les réglages).",
+            )
+        }
+    }
+
+    private fun openBilan(weekly: Boolean = false) =
+        startActivity(Intent(this, BilanActivity::class.java).putExtra(BilanActivity.EXTRA_WEEKLY, weekly))
+
+    private fun openAppSettings() {
+        runCatching {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        }
+    }
+
+    // --- Envoi manuel vers Dawarich ----------------------------------------------------------
+
+    /** Envoie un trajet tout de suite, sans attendre la tâche automatique, et dit ce qui s'est passé. */
+    private fun pushToDawarich(t: Trip) {
+        if (!TripRecorder.pointsFile(this, t.id).exists()) {
+            Toast.makeText(this, "Les points de ce trajet ne sont plus sur le téléphone.", Toast.LENGTH_LONG).show()
+            return
+        }
+        Toast.makeText(this, "Envoi vers Dawarich…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val result = try {
+                val count = Dawarich.uploadTrip(this, t.id)
+                if (!TripRecorder.isSent(this, t.id)) TripRecorder.markSent(this, t.id)
+                PushResult(t, true, "$count points envoyés à Dawarich.")
+            } catch (e: RedirectException) {
+                if (e.umbrel) PushResult(t, false, RedirectException.UMBREL_MESSAGE + "\n\nRedirection vers :\n${e.location}") else PushResult(
+                    t, false,
+                    "Le serveur ne répond pas à l'adresse des réglages :\n${SyncSettings.url(this)}\n\n" +
+                        "Il renvoie vers :\n${e.location}",
+                    e.suggestedUrl,
+                )
+            } catch (e: Exception) {
+                PushResult(t, false, e.message ?: e.javaClass.simpleName)
+            }
+            runOnUiThread {
+                pushResult = result
+                // Le trajet reste en attente : la tâche automatique réessaiera dès qu'Internet revient.
+                if (!result.ok) SyncWorker.runSoon(this)
+                tripTick++
+            }
+        }.start()
+    }
+
+    /** « Véhicule : Scénic ▾ » : pour corriger le véhicule d'un trajet. */
+    @Composable
+    private fun VehiclePicker(t: Trip, done: () -> Unit) {
+        var open by remember { mutableStateOf(false) }
+        Box {
+            TextButton(onClick = { open = true }) { Text("Véhicule : ${t.vehicle.name} ▾") }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                VehicleStore.vehicles.forEach { v ->
+                    DropdownMenuItem(text = { Text(v.name) }, onClick = {
+                        open = false
+                        if (v.id != t.vehicleId) {
+                            TripRecorder.setVehicle(this@MainActivity, t.id, v.id)
+                            statusTick++
+                            done()
+                        }
+                    })
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun PushResultDialog(r: PushResult) {
+        AlertDialog(
+            onDismissRequest = { pushResult = null },
+            title = { Text(if (r.ok) "✅ Trajet envoyé" else "❌ Envoi impossible") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SelectionContainer { Text(r.message) }
+                    r.suggestedUrl?.let { url ->
+                        Text("Utiliser plutôt cette adresse :", fontWeight = FontWeight.SemiBold)
+                        SelectionContainer { Text(url) }
+                        if (url.startsWith("http://")) {
+                            Text(
+                                "Attention : en http://, la clé API passe sans chiffrement. Mieux vaut régler le serveur pour qu'il réponde en https://.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                    if (!r.ok && r.suggestedUrl == null) {
+                        Text(
+                            "Tu peux aussi partager le GPX du trajet et l'importer dans Dawarich.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                val url = r.suggestedUrl
+                if (url != null) {
+                    TextButton(onClick = {
+                        SyncSettings.setUrl(this@MainActivity, url)
+                        pushResult = null
+                        pushToDawarich(r.trip)
+                    }) { Text("Utiliser et réessayer") }
+                } else {
+                    TextButton(onClick = { pushResult = null }) { Text("OK") }
+                }
+            },
+            dismissButton = {
+                if (r.suggestedUrl != null) TextButton(onClick = { pushResult = null }) { Text("Annuler") }
+            },
+        )
+    }
+
+    // --- Partage ----------------------------------------------------------------------------
+
+    /** Partage les fichiers d'une extension donnée (mail, Drive, Nextcloud…). */
+    private fun exportAll(ext: String, mime: String) {
+        val files = TripRecorder.dir(this).listFiles { f -> f.name.endsWith(".$ext") }?.sortedBy { it.name }
+        share(files.orEmpty(), mime)
+    }
+
+    private fun share(files: List<File>, mime: String) {
+        val existing = files.filter { it.exists() }
+        if (existing.isEmpty()) {
+            Toast.makeText(this, "Fichier introuvable (supprimé après la durée de conservation ?)", Toast.LENGTH_LONG).show()
+            return
+        }
+        val uris = ArrayList(existing.map { FileProvider.getUriForFile(this, "$packageName.fichiers", it) })
+        val send = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = mime
+            putExtra(Intent.EXTRA_SUBJECT, "Trajets Scénic")
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching { startActivity(Intent.createChooser(send, "Partager")) }
+    }
+}

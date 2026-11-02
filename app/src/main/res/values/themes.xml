@@ -1,0 +1,6 @@
+<resources>
+    <!-- Thème de démarrage ; l'écran lui-même est dessiné en Compose (Material 3 Expressive). -->
+    <style name="Theme.ScenicTrajets" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FBF8FF</item>
+    </style>
+</resources>

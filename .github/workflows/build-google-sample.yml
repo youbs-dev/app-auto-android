@@ -1,0 +1,32 @@
+name: Build Google sample (diagnostic)
+
+# Compile l'app d'exemple officielle de Google (Showcase) pour vérifier
+# si Android Auto affiche une app installée hors Play Store sur le téléphone.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/build-google-sample.yml
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: android/car-samples
+          path: car-samples
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+      - name: Compiler Showcase (mobile)
+        working-directory: car-samples/car_app_library
+        run: gradle :showcase:mobile:assembleDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: google-showcase-debug
+          path: car-samples/car_app_library/showcase/mobile/build/outputs/apk/debug/*.apk
