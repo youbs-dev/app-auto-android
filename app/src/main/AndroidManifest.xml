@@ -32,7 +32,8 @@
 
     <application
         android:allowBackup="false"
-        android:icon="@drawable/ic_car"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/Theme.ScenicTrajets"
         android:usesCleartextTraffic="true">

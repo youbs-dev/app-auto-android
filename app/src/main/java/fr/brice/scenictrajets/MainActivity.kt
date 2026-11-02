@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -38,6 +40,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
+import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.LinearWavyProgressIndicator
@@ -235,13 +238,11 @@ class MainActivity : ComponentActivity() {
                 if (trips.isEmpty()) {
                     item { SectionTitle("Historique") }
                     item {
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-                            Text(
-                                "Aucun trajet pour l'instant. Ils apparaîtront ici après chaque trajet de plus de 200 m.",
-                                modifier = Modifier.padding(20.dp),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                        EmptyState(
+                            R.drawable.ic_distance,
+                            "Aucun trajet pour l'instant",
+                            "Tes trajets apparaîtront ici après chaque parcours de plus de 200 m.",
+                        )
                     }
                 }
                 val shown = trips.take(MAX_TRIPS_SHOWN)
@@ -252,7 +253,7 @@ class MainActivity : ComponentActivity() {
                 if (trips.size > MAX_TRIPS_SHOWN) {
                     item {
                         Text(
-                            "Les trajets plus anciens sont dans l'export CSV (menu ⋮).",
+                            "Les trajets plus anciens sont dans l'export CSV (menu en haut à droite).",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -321,7 +322,15 @@ class MainActivity : ComponentActivity() {
             ),
         ) {
             Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(s.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        painterResource(if (s.ok) R.drawable.ic_check_circle else R.drawable.ic_warning),
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(s.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                }
                 Text(s.text, style = MaterialTheme.typography.bodyMedium)
                 s.button?.let {
                     Button(onClick = s.action, modifier = Modifier.fillMaxWidth()) { Text(it) }
@@ -423,7 +432,7 @@ class MainActivity : ComponentActivity() {
             shape = MaterialTheme.shapes.extraLarge,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
         ) {
-            Column(Modifier.padding(18.dp)) {
+            Column(Modifier.padding(20.dp)) {
                 Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 Text(
                     String.format(Locale.FRANCE, "%.0f km", km),
@@ -456,21 +465,21 @@ class MainActivity : ComponentActivity() {
         // Accueil allégé : heure, distance et batterie. Le reste (lieux, coût, météo, comparaison)
         // est dans le détail du trajet, en le touchant.
         val battery = if (t.batteryStart != null && t.batteryEnd != null) {
-            String.format(java.util.Locale.FRANCE, "🔋 %.0f %% → %.0f %%", t.batteryStart, t.batteryEnd)
-        } else "🔋 —"
+            String.format(java.util.Locale.FRANCE, "%.0f %% → %.0f %%", t.batteryStart, t.batteryEnd)
+        } else "—"
         Card(
             onClick = onClick,
-            shape = MaterialTheme.shapes.large,
+            shape = MaterialTheme.shapes.extraLarge,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         ) {
             Column(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text("🕒 " + TripStats.hours(t), style = MaterialTheme.typography.titleMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    Text("🛣️ " + TripStats.km(t.distanceKm), style = MaterialTheme.typography.bodyLarge)
-                    Text(battery, style = MaterialTheme.typography.bodyLarge)
+                IconText(R.drawable.ic_schedule, TripStats.hours(t), MaterialTheme.typography.titleMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    IconText(R.drawable.ic_distance, TripStats.km(t.distanceKm), MaterialTheme.typography.bodyLarge)
+                    IconText(R.drawable.ic_battery, battery, MaterialTheme.typography.bodyLarge)
                 }
             }
         }
@@ -585,7 +594,14 @@ class MainActivity : ComponentActivity() {
     private fun PushResultDialog(r: PushResult) {
         AlertDialog(
             onDismissRequest = { pushResult = null },
-            title = { Text(if (r.ok) "✅ Trajet envoyé" else "❌ Envoi impossible") },
+            icon = {
+                Icon(
+                    painterResource(if (r.ok) R.drawable.ic_check_circle else R.drawable.ic_error),
+                    contentDescription = null,
+                    tint = if (r.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                )
+            },
+            title = { Text(if (r.ok) "Trajet envoyé" else "Envoi impossible") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SelectionContainer { Text(r.message) }

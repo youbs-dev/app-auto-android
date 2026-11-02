@@ -10,7 +10,7 @@ import java.util.Locale
 
 /**
  * Journal du dernier plantage : l'erreur exacte est gardée dans un fichier,
- * puis affichée dans Réglages (et Diagnostic) pour pouvoir la transmettre.
+ * puis affichée dans Réglages (À propos) pour pouvoir la transmettre.
  */
 object CrashLog {
     @Volatile private var installed = false

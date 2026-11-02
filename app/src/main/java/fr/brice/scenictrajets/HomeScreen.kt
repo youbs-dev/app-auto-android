@@ -9,12 +9,10 @@ import androidx.car.app.Screen
 import androidx.car.app.model.Action
 import androidx.car.app.model.ActionStrip
 import androidx.car.app.model.CarColor
-import androidx.car.app.model.CarIcon
 import androidx.car.app.model.Pane
 import androidx.car.app.model.PaneTemplate
 import androidx.car.app.model.Row
 import androidx.car.app.model.Template
-import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import java.util.Locale
@@ -77,8 +75,9 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
         if (missing.isNotEmpty() || !TripRecorder.hasLocationPermission(carContext)) {
             pane.addRow(
                 Row.Builder()
-                    .setTitle("⚠️ Autorisations manquantes")
-                    .addText("Ouvre Scénic Trajets sur le téléphone, ou Diagnostic à l'arrêt")
+                    .setImage(CarIcons.of(carContext, R.drawable.ic_warning, CarColor.YELLOW))
+                    .setTitle("Autorisations manquantes")
+                    .addText("Ouvre Scénic Trajets sur le téléphone, ou Infos à l'arrêt")
                     .build()
             )
         }
@@ -117,13 +116,9 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
                             .build()
                     )
                     .addAction(
-                        // Une seule action avec texte est permise ici : Diagnostic n'a qu'une icône.
+                        // Une seule action avec texte est permise ici : Infos n'a qu'une icône.
                         Action.Builder()
-                            .setIcon(
-                                CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_diagnostic))
-                                    .setTint(CarColor.DEFAULT)
-                                    .build()
-                            )
+                            .setIcon(CarIcons.of(carContext, R.drawable.ic_diagnostic))
                             .setOnClickListener { screenManager.push(DiagnosticScreen(carContext, this)) }
                             .build()
                     )
@@ -136,7 +131,8 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
     private fun tripRow(): Row = if (TripRecorder.isActive) {
         val live = TripStats.live(carContext)
         Row.Builder()
-            .setTitle("🔴 " + TripStats.km(live.distanceKm) + " · " + TripStats.duration(live.durationMin))
+            .setImage(CarIcons.of(carContext, R.drawable.ic_record, CarColor.RED))
+            .setTitle(TripStats.km(live.distanceKm) + " · " + TripStats.duration(live.durationMin))
             .addText(TripStats.liveSpeed(live))
             .addText(
                 TripRecorder.resumeOffer?.let { "Arrêté à " + TripStats.clock(it.end) + " : touche Reprendre pour continuer ce trajet" }
@@ -150,6 +146,7 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
             .build()
     } else {
         Row.Builder()
+            .setImage(CarIcons.of(carContext, R.drawable.ic_distance))
             .setTitle("Aucun trajet en cours")
             .addText(
                 if (DrivingDetector.isEnabled(carContext)) "Il démarrera tout seul dès que la voiture roule"
@@ -169,7 +166,13 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
             else -> "En attente de la voiture…"
         }
         val low = BatteryAlert.isLow(carContext)
-        val row = Row.Builder().setTitle(if (low) "🪫 Batterie basse · touche Bornes" else "🔋 Batterie").addText(text)
+        val row = Row.Builder()
+            .setImage(
+                if (low) CarIcons.of(carContext, R.drawable.ic_battery_alert, CarColor.RED)
+                else CarIcons.of(carContext, R.drawable.ic_battery, CarColor.GREEN)
+            )
+            .setTitle(if (low) "Batterie basse · touche Bornes" else "Batterie")
+            .addText(text)
         // Pendant un trajet : batterie utilisée, consommation et coût depuis le départ.
         if (TripRecorder.isActive && pct != null) row.addText(TripStats.liveEnergy(TripStats.live(carContext)))
         return row.build()
@@ -189,7 +192,11 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
             (TripStats.total(trips, TripStats.startOfDay(System.currentTimeMillis())) +
                 (if (cost > 0) " · " + TripStats.euros(cost) else "")).also { todayCache = key to it }
         }
-        return Row.Builder().setTitle("Aujourd'hui").addText(text).build()
+        return Row.Builder()
+            .setImage(CarIcons.of(carContext, R.drawable.ic_calendar))
+            .setTitle("Aujourd'hui")
+            .addText(text)
+            .build()
     }
 
     private fun tripAction(): Action = if (TripRecorder.isActive) {
@@ -224,8 +231,8 @@ class HomeScreen(carContext: CarContext) : Screen(carContext) {
                 CarToast.makeText(carContext, "Trajet démarré", CarToast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
-            Log.e("ScenicTest", "Trajet : erreur", e)
-            CarToast.makeText(carContext, "Erreur : ${e.javaClass.simpleName}", CarToast.LENGTH_LONG).show()
+            Log.e("ScenicTrajets", "Trajet : erreur", e)
+            CarToast.makeText(carContext, UserMessages.of(e), CarToast.LENGTH_LONG).show()
         }
         invalidate()
     }

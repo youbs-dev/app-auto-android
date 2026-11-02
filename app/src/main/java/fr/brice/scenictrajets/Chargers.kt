@@ -76,7 +76,7 @@ object BatteryAlert {
         alerted = true
         val text = String.format(Locale.FRANCE, "%.0f %% · %s", pct,
             CarSnapshot.rangeKm?.let { String.format(Locale.FRANCE, "%.0f km d'autonomie", it) } ?: "pense à recharger")
-        runCatching { CarToast.makeText(c, "🪫 Batterie basse : $text", CarToast.LENGTH_LONG).show() }
+        runCatching { CarToast.makeText(c, "Batterie basse : $text", CarToast.LENGTH_LONG).show() }
         runCatching { notify(c, text) }.onFailure { Log.w("ScenicAlerte", "Notification impossible", it) }
     }
 
@@ -91,13 +91,13 @@ object BatteryAlert {
             0,
         )
         val n = NotificationCompat.Builder(c, CHANNEL)
-            .setSmallIcon(R.drawable.ic_car)
+            .setSmallIcon(R.drawable.ic_vehicle)
             .setContentTitle("Batterie basse")
             .setContentText(text)
             .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
             .extend(
                 CarAppExtender.Builder()
-                    .setContentTitle("🪫 Batterie basse")
+                    .setContentTitle("Batterie basse")
                     .setContentText("$text · Touche pour voir les bornes proches")
                     .setContentIntent(open)
                     .setImportance(NotificationManagerCompat.IMPORTANCE_HIGH)
@@ -203,8 +203,8 @@ class ChargersScreen(carContext: CarContext) : Screen(carContext) {
     }
 
     /**
-     * Si Android Auto refuse la carte, on essaie une simple liste, puis un message avec l'erreur :
-     * l'app ne plante plus et on sait ce qui ne va pas.
+     * Si Android Auto refuse la carte, on essaie une simple liste, puis un message simple :
+     * l'app ne plante plus (l'erreur détaillée reste dans le journal).
      */
     override fun onGetTemplate(): Template = try {
         // La bibliothèque vérifie cette autorisation hors de ce try : sans elle, on reste sur la liste.
@@ -215,7 +215,7 @@ class ChargersScreen(carContext: CarContext) : Screen(carContext) {
             listTemplate()
         } catch (e2: Exception) {
             Log.e("ScenicBornes", "Liste des bornes refusée", e2)
-            MessageTemplate.Builder("Bornes indisponibles.\n${e.javaClass.simpleName} : ${e.message ?: ""}")
+            MessageTemplate.Builder("Les bornes ne peuvent pas s'afficher pour le moment. Réessaie dans un instant.")
                 .setTitle("Bornes proches")
                 .setHeaderAction(Action.BACK)
                 .build()
