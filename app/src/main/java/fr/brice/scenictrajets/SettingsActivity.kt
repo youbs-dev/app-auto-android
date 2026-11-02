@@ -1,6 +1,8 @@
 package fr.brice.scenictrajets
 
 import android.content.Context
+import androidx.annotation.DrawableRes
+import androidx.compose.ui.res.painterResource
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -102,7 +104,7 @@ class SettingsActivity : ComponentActivity() {
         threshold = AlertSettings.threshold(this)
         vehicles = VehicleStore.vehicles
         openSections = getSharedPreferences("reglages_affichage", MODE_PRIVATE).getStringSet("ouverts", null)?.toSet() ?: emptySet()
-        TripRecorder.lastError(this)?.let { if (SyncSettings.isConfigured(this)) syncStatus = "❌ Dernier envoi échoué : $it" }
+        TripRecorder.lastError(this)?.let { if (SyncSettings.isConfigured(this)) syncStatus = "Dernier envoi échoué : $it" }
         setContent { ScenicTheme { SettingsContent() } }
     }
 
@@ -128,14 +130,14 @@ class SettingsActivity : ComponentActivity() {
     private fun saveAndTest() {
         saveSettings()
         if (!SyncSettings.isConfigured(this)) {
-            syncStatus = "⚠️ Renseigne l'adresse du serveur et la clé API."
+            syncStatus = "Renseigne l'adresse du serveur et la clé API."
             return
         }
-        syncStatus = "Test en cours…"
+        syncStatus = "Vérification en cours…"
         Thread {
             val error = Dawarich.test(this)
             runOnUiThread {
-                syncStatus = if (error == null) "✅ Connexion à Dawarich réussie" else "❌ Échec : $error"
+                syncStatus = if (error == null) "Connexion à Dawarich réussie" else "Échec : $error"
                 if (error == null) SyncWorker.runSoon(this)
             }
         }.start()
@@ -174,7 +176,7 @@ class SettingsActivity : ComponentActivity() {
                 item {
                     val summary = vehicles.joinToString(" · ") { it.name } +
                         (if (vehicles.any { it.toConfigure }) " · à régler" else "")
-                    Section("vehicules", "🚗", "Véhicules", summary) {
+                    Section("vehicules", R.drawable.ic_vehicle, "Véhicules", summary) {
                         var editing by remember { mutableStateOf<Vehicle?>(null) }
                         vehicles.forEach { v ->
                             OutlinedButton(onClick = { editing = v }, modifier = Modifier.fillMaxWidth()) {
@@ -198,7 +200,7 @@ class SettingsActivity : ComponentActivity() {
                     }
                 }
                 item {
-                    Section("alerte", "🔋", "Alerte batterie basse", if (threshold == 0) "Jamais" else "Sous $threshold %") {
+                    Section("alerte", R.drawable.ic_battery_alert, "Alerte batterie basse", if (threshold == 0) "Jamais" else "Sous $threshold %") {
                         var open by remember { mutableStateOf(false) }
                         Text("Prévenir sous", style = MaterialTheme.typography.bodyLarge)
                         Box {
@@ -264,7 +266,7 @@ class SettingsActivity : ComponentActivity() {
                         }
                     }
                     val summary = "Domicile " + state("domicile").substringBefore(" à") + " · travail " + state("travail").substringBefore(" à")
-                    Section("domicile", "🏠", "Domicile et travail", summary) {
+                    Section("domicile", R.drawable.ic_home, "Domicile et travail", summary) {
                         listOf("domicile" to "Domicile", "travail" to "Travail").forEach { (key, label) ->
                             val manual = routesTick.let { Routes.isManual(c, key) }
                             Text("$label : " + state(key), style = MaterialTheme.typography.bodyLarge)
@@ -300,11 +302,11 @@ class SettingsActivity : ComponentActivity() {
                 item {
                     val summary = when {
                         url.isBlank() || key.isBlank() -> "Pas configuré"
-                        syncStatus.startsWith("❌") -> "Dernier envoi échoué"
+                        syncStatus.startsWith("Échec") || syncStatus.startsWith("Dernier envoi") -> "Dernier envoi échoué"
                         autoUpload -> "Envoi automatique activé"
                         else -> "Envoi à la main"
                     }
-                    Section("dawarich", "☁", "Dawarich", summary) {
+                    Section("dawarich", R.drawable.ic_cloud, "Dawarich", summary) {
                         OutlinedTextField(
                             value = url, onValueChange = { url = it },
                             label = { Text("Adresse du serveur") },
@@ -339,7 +341,7 @@ class SettingsActivity : ComponentActivity() {
                 item {
                     val summary = "Thème " + ThemePrefs.mode.label +
                         (if (ThemePrefs.dynamicAvailable && ThemePrefs.dynamic) " · couleurs du fond d'écran" else "")
-                    Section("apparence", "🎨", "Apparence", summary) {
+                    Section("apparence", R.drawable.ic_contrast, "Apparence", summary) {
                         Text("Thème", style = MaterialTheme.typography.bodyLarge)
                         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                             val modes = ThemeMode.entries
@@ -359,7 +361,7 @@ class SettingsActivity : ComponentActivity() {
                     }
                 }
                 item {
-                    Section("autorisations", "🔐", "Android Auto et autorisations", "Autorisations de l'app, ouvrir Android Auto") {
+                    Section("autorisations", R.drawable.ic_lock, "Android Auto et autorisations", "Autorisations de l'app, ouvrir Android Auto") {
                         Hint(
                             "L'app s'affiche sur l'écran de la voiture via Android Auto. Elle lit la batterie, l'autonomie " +
                                 "et le kilométrage, et utilise la localisation pour le parcours GPS."
@@ -380,12 +382,13 @@ class SettingsActivity : ComponentActivity() {
                 item {
                     val crash = CrashLog.last(c)
                     val version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: "?"
-                    val summary = "Version $version" + (if (crash != null) " · un plantage enregistré" else " · aucun plantage")
-                    Section("depannage", "🛠", "Dépannage", summary) {
+                    val summary = "Scénic Trajets $version" + (if (crash != null) " · un plantage enregistré" else "")
+                    Section("depannage", R.drawable.ic_diagnostic, "À propos", summary) {
                         if (crash == null) {
-                            Hint("Aucun plantage enregistré. Si l'app plante, l'erreur exacte apparaîtra ici pour être envoyée.")
+                            Hint("Enregistre tes trajets avec Android Auto, suis ta batterie et ta consommation.")
+                            Hint("Si l'app plante un jour, le détail de l'erreur apparaîtra ici pour être envoyé.")
                         } else {
-                            Hint("L'erreur exacte du dernier plantage. Envoie-la pour qu'elle soit corrigée.")
+                            Hint("Détail du dernier plantage. Envoie-le pour qu'il soit corrigé.")
                             Text(
                                 crash.lines().take(12).joinToString("\n"),
                                 style = MaterialTheme.typography.bodySmall,
@@ -418,7 +421,7 @@ class SettingsActivity : ComponentActivity() {
     @Composable
     private fun Section(
         id: String,
-        icon: String,
+        @DrawableRes icon: Int,
         title: String,
         summary: String,
         content: @Composable ColumnScope.() -> Unit,
@@ -442,7 +445,14 @@ class SettingsActivity : ComponentActivity() {
                         .size(40.dp)
                         .clip(MaterialTheme.shapes.medium)
                         .background(MaterialTheme.colorScheme.secondaryContainer),
-                ) { Text(icon, style = MaterialTheme.typography.titleMedium) }
+                ) {
+                    Icon(
+                        painterResource(icon),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
                 Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
                     Text(title, style = MaterialTheme.typography.titleMedium)
                     if (summary.isNotBlank()) {

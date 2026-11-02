@@ -15,7 +15,7 @@ import androidx.car.app.hardware.info.Speed
 import androidx.core.content.ContextCompat
 import java.util.Locale
 
-private const val TAG = "ScenicTest"
+private const val TAG = "ScenicTrajets"
 
 internal val CAR_PERMISSIONS = listOf(
     "com.google.android.gms.permission.CAR_FUEL",
@@ -25,7 +25,7 @@ internal val CAR_PERMISSIONS = listOf(
 
 /**
  * Lit en continu ce que la voiture transmet à Android Auto (batterie, autonomie, compteur…).
- * Les textes servent à l'écran Diagnostic ; les valeurs sont copiées dans [CarSnapshot] pour les trajets.
+ * Les textes servent à l'écran Infos ; les valeurs sont copiées dans [CarSnapshot] pour les trajets.
  */
 class CarData(private val carContext: CarContext, private val onChange: () -> Unit) {
 

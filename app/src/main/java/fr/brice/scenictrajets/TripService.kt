@@ -224,7 +224,7 @@ class TripService : Service() {
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
         val b = Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_car)
+            .setSmallIcon(R.drawable.ic_vehicle)
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -245,7 +245,7 @@ class TripService : Service() {
                 this, 2, Intent(this, TripService::class.java).setAction(ACTION_STOP),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
-            b.addAction(Notification.Action.Builder(Icon.createWithResource(this, R.drawable.ic_car), "Arrêter le trajet", stop).build())
+            b.addAction(Notification.Action.Builder(Icon.createWithResource(this, R.drawable.ic_vehicle), "Arrêter le trajet", stop).build())
         } else {
             b.setContentTitle("En attente du départ…")
         }
@@ -256,7 +256,7 @@ class TripService : Service() {
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
             b.addAction(
-                Notification.Action.Builder(Icon.createWithResource(this, R.drawable.ic_car), "Reprendre le trajet précédent", resume).build()
+                Notification.Action.Builder(Icon.createWithResource(this, R.drawable.ic_vehicle), "Reprendre le trajet précédent", resume).build()
             )
         }
         return b.build()

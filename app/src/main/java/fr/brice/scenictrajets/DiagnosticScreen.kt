@@ -14,7 +14,7 @@ import androidx.car.app.model.Template
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 
-/** Ce que la voiture transmet, ligne par ligne, et les autorisations. Utile pour dépanner. */
+/** Écran « Infos » : ce que la voiture transmet et les autorisations. */
 class DiagnosticScreen(carContext: CarContext, private val home: HomeScreen) : Screen(carContext) {
 
     private val car get() = home.car
@@ -38,18 +38,14 @@ class DiagnosticScreen(carContext: CarContext, private val home: HomeScreen) : S
             .setTitle("Autorisations")
             .addText(
                 when {
-                    missing.isEmpty() -> "toutes accordées"
-                    permissionError != null -> "erreur : $permissionError"
-                    else -> "${missing.size} manquante(s) : toucher pour demander (à l'arrêt)"
+                    missing.isEmpty() -> "Toutes accordées"
+                    permissionError != null -> "$permissionError"
+                    else -> if (missing.size == 1) "1 manquante · touche pour l'accorder (à l'arrêt)" else "${missing.size} manquantes · touche pour les accorder (à l'arrêt)"
                 }
             )
         if (missing.isNotEmpty()) {
             permRow.setOnClickListener(ParkedOnlyOnClickListener.create { requestCarPermissions(missing) })
         }
-
-        val version = runCatching {
-            carContext.packageManager.getPackageInfo(carContext.packageName, 0).versionName
-        }.getOrNull() ?: "?"
 
         val list = ItemList.Builder()
             .addItem(row("Véhicule", car.vehicule))
@@ -57,12 +53,10 @@ class DiagnosticScreen(carContext: CarContext, private val home: HomeScreen) : S
             .addItem(row("Kilométrage", car.kilometrage))
             .addItem(row("Vitesse (voiture)", car.vitesse))
             .addItem(permRow.build())
-            .addItem(row("Version de l'app", version))
-            .addItem(row("Dernier plantage", CrashLog.summary(carContext) ?: "aucun"))
             .build()
 
         return ListTemplate.Builder()
-            .setTitle("Diagnostic")
+            .setTitle("Infos")
             .setHeaderAction(Action.BACK)
             .setSingleList(list)
             // Une seule action avec texte est permise dans cette barre.
@@ -85,15 +79,15 @@ class DiagnosticScreen(carContext: CarContext, private val home: HomeScreen) : S
             carContext.requestPermissions(missing) { granted, rejected ->
                 CarToast.makeText(
                     carContext,
-                    "Accordées : ${granted.size}, refusées : ${rejected.size}",
+                    if (rejected.isEmpty()) "Autorisations accordées" else "Certaines autorisations ont été refusées",
                     CarToast.LENGTH_LONG,
                 ).show()
                 car.restart()
                 invalidate()
             }
         } catch (e: Exception) {
-            Log.e("ScenicTest", "Demande d'autorisations impossible", e)
-            permissionError = e.javaClass.simpleName + (e.message?.let { " : $it" } ?: "")
+            Log.e("ScenicTrajets", "Demande d'autorisations impossible", e)
+            permissionError = "À accorder depuis l'app sur le téléphone"
             CarToast.makeText(
                 carContext,
                 "Ouvre l'app Scénic Trajets sur le téléphone pour autoriser l'accès",

@@ -150,7 +150,7 @@ class BilanActivity : ComponentActivity() {
                         }
                     }
                     if (bands.isNotEmpty()) item { WeatherCard(bands) }
-                    if (months.isEmpty()) item { Empty("Le bilan apparaîtra après le premier trajet.") }
+                    if (months.isEmpty()) item { EmptyState(R.drawable.ic_calendar, "Pas encore de bilan", "Le bilan apparaîtra après ton premier trajet.") }
                     items(months, key = { it.label }) { MonthCard(it) }
                     item {
                         Hint(
@@ -167,7 +167,7 @@ class BilanActivity : ComponentActivity() {
                                 "Les recharges suivantes au même endroit reprennent ce lieu et ce prix."
                         )
                     }
-                    if (charges.isEmpty()) item { Empty("Aucune recharge détectée pour l'instant.") }
+                    if (charges.isEmpty()) item { EmptyState(R.drawable.ic_bolt, "Aucune recharge", "Les recharges sont détectées toutes seules quand la batterie remonte.") }
                     items(charges, key = { it.id }) { ch -> ChargeCard(ch) { editing = ch } }
                 }
             }
@@ -249,14 +249,11 @@ class BilanActivity : ComponentActivity() {
     private fun ChargeCard(ch: Charge, onClick: () -> Unit) {
         Card(
             onClick = onClick,
-            shape = MaterialTheme.shapes.large,
+            shape = MaterialTheme.shapes.extraLarge,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         ) {
-            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    "⚡ " + ch.place.ifEmpty { "Lieu à préciser" },
-                    style = MaterialTheme.typography.titleMedium,
-                )
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                IconText(R.drawable.ic_bolt, ch.place.ifEmpty { "Lieu à préciser" }, MaterialTheme.typography.titleMedium)
                 Text(TripStats.charge(ch), style = MaterialTheme.typography.bodyLarge)
                 Text(
                     TripStats.chargeWhen(ch) + String.format(Locale.FRANCE, " · %.3f €/kWh", ch.pricePerKwh),
@@ -310,12 +307,6 @@ class BilanActivity : ComponentActivity() {
     private fun Hint(text: String) =
         Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-    @Composable
-    private fun Empty(text: String) {
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-            Text(text, modifier = Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
 }
 
 /** Lit « 0,25 » ou « 0.25 ». */

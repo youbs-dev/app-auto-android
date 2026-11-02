@@ -4,7 +4,7 @@ App Android Auto (sur le téléphone) qui enregistre les trajets du Scénic E-Te
 
 ## Ce que fait l'app
 
-- **Dans la voiture** : trajet en cours en direct, batterie, total du jour, bouton Démarrer / Arrêter, derniers trajets, bornes de recharge proches, écran Diagnostic.
+- **Dans la voiture** : trajet en cours en direct, batterie, total du jour, bouton Démarrer / Arrêter, derniers trajets, bornes de recharge proches, écran Infos.
 - **Sur le téléphone** : historique par jour, détail et carte de chaque trajet, bilan du mois, journal des recharges, réglages (prix du kWh, véhicules, Dawarich, conservation).
 - **Trajets automatiques** : l'app détecte la conduite et démarre seule ; le trajet se termine quand Android Auto se déconnecte ou après 10 min à l'arrêt.
 - **Export** : CSV (tableur) et GPX (Dawarich), envoi direct à Dawarich dès qu'Internet est disponible.
@@ -17,5 +17,6 @@ App Android Auto (sur le téléphone) qui enregistre les trajets du Scénic E-Te
 
 ## Versions récentes
 
+- **0.27** : interface finalisée : nom sans « (test) », nouvelle icône et écran de démarrage, icônes Material à la place des emojis (téléphone et voiture), états vides soignés, « À propos » dans les Réglages, Diagnostic renommé Infos, messages d'erreur lisibles.
 - **0.26** : fin d'un trajet terminé à l'arrêt corrigée (plus 10 min en trop), distance sans la dérive du GPS à l'arrêt, compteur de la voiture en contrôle, GPS plus économe (lent en attente et à l'arrêt, coupé 2 min après la déconnexion d'Android Auto), notification avec km, durée, batterie et bouton Arrêter.
 - **0.25** : correction de la batterie par véhicule, accueil du téléphone allégé.

@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.ScenicTrajets" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#121318</item>
+        <item name="android:windowSplashScreenBackground">#121318</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#2F5BA8</item>
+    </style>
+</resources>

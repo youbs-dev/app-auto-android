@@ -11,8 +11,8 @@ android {
         applicationId = "fr.youbs.scenictrajets"
         minSdk = 26
         targetSdk = 36
-        versionCode = 26
-        versionName = "0.26-test"
+        versionCode = 27
+        versionName = "0.27"
     }
 
     // Clé de debug fixe, versionnée : chaque compilation GitHub signe pareil,

@@ -4,6 +4,7 @@ import androidx.car.app.CarContext
 import androidx.car.app.Screen
 import androidx.car.app.constraints.ConstraintManager
 import androidx.car.app.model.Action
+import androidx.car.app.model.CarColor
 import androidx.car.app.model.ItemList
 import androidx.car.app.model.ListTemplate
 import androidx.car.app.model.Row
@@ -32,6 +33,7 @@ class TripsScreen(carContext: CarContext) : Screen(carContext) {
         if (month != null) {
             list.addItem(
                 Row.Builder()
+                    .setImage(CarIcons.of(carContext, R.drawable.ic_calendar))
                     .setTitle("Ce mois : " + TripStats.monthLine(month))
                     .addText("Cette semaine : " + TripStats.total(trips, TripStats.startOfWeek()))
                     .build()
@@ -41,7 +43,8 @@ class TripsScreen(carContext: CarContext) : Screen(carContext) {
         charges.firstOrNull()?.let { ch ->
             list.addItem(
                 Row.Builder()
-                    .setTitle("⚡ Dernière recharge : " + TripStats.charge(ch))
+                    .setImage(CarIcons.of(carContext, R.drawable.ic_bolt, CarColor.GREEN))
+                    .setTitle("Dernière recharge : " + TripStats.charge(ch))
                     .addText(listOf(ch.place, TripStats.chargeWhen(ch)).filter { it.isNotEmpty() }.joinToString(" · "))
                     .build()
             )
