@@ -228,7 +228,7 @@ class SettingsActivity : ComponentActivity() {
                 item {
                     val keep = SyncSettings.RETENTION_CHOICES.firstOrNull { it.first == retention }?.second ?: "2 mois"
                     val summary = (if (autoStart) "Automatique" else "À la main") + " · fichiers gardés " + keep.lowercase()
-                    Section("enregistrement", "⏺", "Enregistrement", summary) {
+                    Section("enregistrement", R.drawable.ic_record, "Enregistrement", summary) {
                         SwitchRow("Démarrer les trajets automatiquement", autoStart) {
                             autoStart = it
                             DrivingDetector.setEnabled(c, it)
@@ -287,7 +287,7 @@ class SettingsActivity : ComponentActivity() {
                     val summary = (priceHome.ifBlank { "?" }) + " €/kWh" +
                         (if (priceOffPeak.isNotBlank()) " · HC $priceOffPeak €" else "") +
                         " · essence " + fuelPrice.ifBlank { "?" } + " €"
-                    Section("prix", "€", "Prix de l'énergie", summary) {
+                    Section("prix", R.drawable.ic_euro, "Prix de l'énergie", summary) {
                         NumberField("Prix du kWh à la maison (€)", priceHome, "0,2516") { priceHome = it }
                         NumberField("Prix du kWh en heures creuses (€, facultatif)", priceOffPeak, "0,2068") { priceOffPeak = it }
                         Hint(
