@@ -17,6 +17,7 @@ App Android Auto (sur le téléphone) qui enregistre les trajets du Scénic E-Te
 
 ## Versions récentes
 
+- **0.28** : Réglages > Domicile et travail : recherche d'adresse (géocodeur du téléphone, sinon OpenStreetMap), adresse lisible et mini-carte pour chaque lieu.
 - **0.27** : interface finalisée : nom sans « (test) », nouvelle icône et écran de démarrage, icônes Material à la place des emojis (téléphone et voiture), états vides soignés, « À propos » dans les Réglages, Diagnostic renommé Infos, messages d'erreur lisibles.
 - **0.26** : fin d'un trajet terminé à l'arrêt corrigée (plus 10 min en trop), distance sans la dérive du GPS à l'arrêt, compteur de la voiture en contrôle, GPS plus économe (lent en attente et à l'arrêt, coupé 2 min après la déconnexion d'Android Auto), notification avec km, durée, batterie et bouton Arrêter.
 - **0.25** : correction de la batterie par véhicule, accueil du téléphone allégé.

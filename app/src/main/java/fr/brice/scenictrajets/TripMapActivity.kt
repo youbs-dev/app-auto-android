@@ -32,14 +32,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
-import java.io.File
 
 /** Carte d'un trajet (fond OpenStreetMap), le tracé coloré selon la vitesse. */
 class TripMapActivity : ComponentActivity() {
@@ -67,12 +65,7 @@ class TripMapActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         VehicleStore.init(this)
-        // OpenStreetMap demande une application identifiée ; les tuiles sont gardées dans le cache de l'app.
-        Configuration.getInstance().apply {
-            userAgentValue = packageName
-            osmdroidBasePath = File(cacheDir, "osmdroid")
-            osmdroidTileCache = File(cacheDir, "osmdroid/tuiles")
-        }
+        setupOsm(this)
         val id = intent.getStringExtra(EXTRA_ID) ?: run { finish(); return }
         setContent { ScenicTheme { Content(id) } }
     }

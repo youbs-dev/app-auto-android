@@ -89,15 +89,39 @@ object Routes {
         return p.getFloat("${which}_lat", 0f).toDouble() to p.getFloat("${which}_lon", 0f).toDouble()
     }
 
-    /** [which] : « domicile » ou « travail ». null efface le réglage (retour à la détection). */
-    fun setManual(c: Context, which: String, pos: Pair<Double, Double>?) {
+    /** [which] : « domicile » ou « travail ». null efface le réglage (retour à la détection). [name] : adresse lisible, si connue. */
+    fun setManual(c: Context, which: String, pos: Pair<Double, Double>?, name: String? = null) {
         val e = prefs(c).edit()
         if (pos == null) e.remove("${which}_lat").remove("${which}_lon")
         else e.putFloat("${which}_lat", pos.first.toFloat()).putFloat("${which}_lon", pos.second.toFloat())
-        e.apply()
+        e.remove("${which}_nom").remove("${which}_nom_pos")
+        if (pos != null && name != null) e.putString("${which}_nom", name).putString("${which}_nom_pos", posKey(pos))
+        e.commit()
         detectedCache = null
         TripRecorder.changed()
     }
+
+    /** Position du lieu [which] (« domicile » ou « travail »). */
+    fun place(c: Context, which: String) = if (which == "domicile") home(c) else work(c)
+
+    /** Adresse lisible du lieu [which], si elle a déjà été trouvée pour sa position actuelle. */
+    fun placeName(c: Context, which: String): String? {
+        val pos = place(c, which) ?: return null
+        val p = prefs(c)
+        return p.getString("${which}_nom", null)?.takeIf { p.getString("${which}_nom_pos", null) == posKey(pos) }
+    }
+
+    /** Cherche l'adresse du lieu [which] si elle manque (Internet, à appeler hors du fil principal). */
+    fun resolveName(c: Context, which: String): String? {
+        placeName(c, which)?.let { return it }
+        val pos = place(c, which) ?: return null
+        val name = TripPlaces.name(c, pos.first, pos.second) ?: return null
+        prefs(c).edit().putString("${which}_nom", name).putString("${which}_nom_pos", posKey(pos)).apply()
+        return name
+    }
+
+    /** Position arrondie à ~10 m : sert à savoir si une adresse gardée correspond encore au lieu. */
+    private fun posKey(p: Pair<Double, Double>) = String.format(Locale.US, "%.4f,%.4f", p.first, p.second)
 
     @Volatile private var detectedCache: Pair<Int, Pair<Pair<Double, Double>?, Pair<Double, Double>?>>? = null
 

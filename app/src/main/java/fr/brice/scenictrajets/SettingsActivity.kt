@@ -62,6 +62,10 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.HorizontalDivider
 
 private const val ANDROID_AUTO = "com.google.android.projection.gearhead"
 
@@ -87,6 +91,8 @@ class SettingsActivity : ComponentActivity() {
     private var threshold by mutableStateOf(20)
     private var vehicles by mutableStateOf(emptyList<Vehicle>())
     private var routesTick by mutableStateOf(0)
+    /** Lieu en cours de recherche (clé, nom affiché), ou null. */
+    private var searchFor by mutableStateOf<Pair<String, String>?>(null)
     private var openSections by mutableStateOf(emptySet<String>())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -258,28 +264,32 @@ class SettingsActivity : ComponentActivity() {
                 item {
                     fun state(key: String): String {
                         routesTick
-                        val pos = if (key == "domicile") Routes.home(c) else Routes.work(c)
                         return when {
-                            pos == null -> "pas encore trouvé"
-                            Routes.isManual(c, key) -> "réglé à la main"
+                            Routes.place(c, key) == null -> "pas encore trouvé"
+                            Routes.isManual(c, key) -> "choisi par toi"
                             else -> "trouvé à partir de tes trajets"
                         }
                     }
                     val summary = "Domicile " + state("domicile").substringBefore(" à") + " · travail " + state("travail").substringBefore(" à")
                     Section("domicile", R.drawable.ic_home, "Domicile et travail", summary) {
-                        listOf("domicile" to "Domicile", "travail" to "Travail").forEach { (key, label) ->
-                            val manual = routesTick.let { Routes.isManual(c, key) }
-                            Text("$label : " + state(key), style = MaterialTheme.typography.bodyLarge)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(onClick = {
-                                    TripPlaces.currentPosition(c)?.let { Routes.setManual(c, key, it); routesTick++ }
-                                }) { Text("Ici, maintenant") }
-                                if (manual) OutlinedButton(onClick = { Routes.setManual(c, key, null); routesTick++ }) { Text("Automatique") }
-                            }
+                        listOf("domicile" to "Domicile", "travail" to "Travail").forEachIndexed { i, (key, label) ->
+                            if (i > 0) HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                            PlaceRow(key, label, state(key))
                         }
                         Hint(
-                            "L'app trouve ton domicile (là où tu arrives le soir) et ton travail (là où tu arrives le matin en semaine). " +
+                            "Sans réglage, l'app trouve ton domicile (là où tu arrives le soir) et ton travail (là où tu arrives le matin en semaine). " +
                                 "Les trajets entre les deux sont marqués, et chaque trajet est comparé à la moyenne des trajets sur le même parcours."
+                        )
+                    }
+                    searchFor?.let { (key, label) ->
+                        PlaceSearchDialog(
+                            title = "Chercher : " + label.lowercase(),
+                            onDismiss = { searchFor = null },
+                            onPick = { p ->
+                                Routes.setManual(c, key, p.lat to p.lon, p.name)
+                                searchFor = null
+                                routesTick++
+                            },
                         )
                     }
                 }
@@ -573,6 +583,40 @@ class SettingsActivity : ComponentActivity() {
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             modifier = Modifier.fillMaxWidth(),
         )
+    }
+
+    @Composable
+    private fun PlaceRow(key: String, label: String, state: String) {
+        val c = this
+        routesTick
+        val pos = Routes.place(c, key)
+        var name by remember(pos) { mutableStateOf(Routes.placeName(c, key)) }
+        // Adresse lisible du lieu trouvé tout seul (ou réglé avant la v0.28) : cherchée une fois, puis gardée.
+        LaunchedEffect(pos) {
+            if (pos != null && name == null) {
+                name = withContext(Dispatchers.IO) { Routes.resolveName(c, key) }
+            }
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(label, style = MaterialTheme.typography.titleMedium)
+            if (pos == null) {
+                Text("Pas encore trouvé : choisis une adresse, ou roule quelques jours.", style = MaterialTheme.typography.bodyMedium)
+            } else {
+                Text(
+                    name ?: String.format(java.util.Locale.FRANCE, "%.5f, %.5f", pos.first, pos.second),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(state.replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                MiniMap(pos.first, pos.second, onClick = { searchFor = key to label })
+            }
+            Button(onClick = { searchFor = key to label }, modifier = Modifier.fillMaxWidth()) { Text("Chercher une adresse") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    TripPlaces.currentPosition(c)?.let { Routes.setManual(c, key, it); routesTick++ }
+                }) { Text("Ici, maintenant") }
+                if (Routes.isManual(c, key)) OutlinedButton(onClick = { Routes.setManual(c, key, null); routesTick++ }) { Text("Automatique") }
+            }
+        }
     }
 
     @Composable
